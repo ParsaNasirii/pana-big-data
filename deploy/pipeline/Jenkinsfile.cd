@@ -1,0 +1,314 @@
+def applications = [
+    'api-service', 'parquet-writer', 'parquet-maintenance', 'starrocks-writer', 'cube-maker'
+]
+def helmInfrastructureCharts = [
+    'hdfs-client': 'deploy/helm/infrastructure/hdfs-client',
+    'postgres': 'deploy/helm/infrastructure/postgres',
+    'schema-registry': 'deploy/helm/infrastructure/schema-registry',
+    'spark': 'deploy/helm/infrastructure/spark-cluster',
+    'monitoring': 'deploy/helm/infrastructure/monitoring-stack'
+]
+def ansibleInfrastructure = ['starrocks', 'kafka']
+def imageTag
+def changedApplications = []
+def changedHelmInfrastructure = []
+def changedAnsibleInfrastructure = []
+
+def parameterName(String targetName) {
+    return "${targetName.toUpperCase().replace('-', '_')}_MODE"
+}
+
+def withCluster(Closure body) {
+    withCredentials([file(credentialsId: params.KUBECONFIG_CREDENTIALS_ID, variable: 'KUBECONFIG')]) {
+        withEnv(["NAMESPACE=${params.NAMESPACE}"]) {
+            body()
+        }
+    }
+}
+
+def withHelmValues(String releaseName, String chartPath, String tag, Closure body) {
+    withEnv([
+        "RELEASE_NAME=${releaseName}",
+        "CHART_PATH=${chartPath}",
+        "VALUES_FILE=${params.HELM_VALUES_DIR}/${releaseName}.yaml",
+        "IMAGE_REPOSITORY=${params.IMAGE_REGISTRY}/${releaseName}",
+        "IMAGE_TAG=${tag ?: ''}"
+    ]) {
+        body()
+    }
+}
+
+def deployHelm(String releaseName, String chartPath, String tag = '') {
+    withCluster {
+        withHelmValues(releaseName, chartPath, tag) {
+            sh '''
+                set -eu
+                set +x
+                set -- helm upgrade --install "$RELEASE_NAME" "$CHART_PATH" \
+                    --kubeconfig "$KUBECONFIG" --namespace "$NAMESPACE" \
+                    --values "$VALUES_FILE" --atomic --wait --timeout 6m
+                if [ -n "$IMAGE_TAG" ]; then
+                    set -- "$@" --set-string "image.repository=$IMAGE_REPOSITORY" \
+                        --set-string "image.tag=$IMAGE_TAG"
+                fi
+                "$@"
+            '''
+        }
+    }
+}
+
+def deployAnsible(String targetName) {
+    def bindings = [file(
+        credentialsId: params.ANSIBLE_VAULT_PASSWORD_CREDENTIALS_ID,
+        variable: 'ANSIBLE_VAULT_PASSWORD_FILE'
+    )]
+    if (params.ANSIBLE_SSH_CREDENTIALS_ID?.trim()) {
+        bindings.add(sshUserPrivateKey(
+            credentialsId: params.ANSIBLE_SSH_CREDENTIALS_ID,
+            keyFileVariable: 'ANSIBLE_PRIVATE_KEY_FILE',
+            usernameVariable: 'ANSIBLE_REMOTE_USER'
+        ))
+    }
+    if (params.ANSIBLE_SSH_PASSWORD_CREDENTIALS_ID?.trim()) {
+        bindings.add(string(credentialsId: params.ANSIBLE_SSH_PASSWORD_CREDENTIALS_ID, variable: 'SSH_PASS'))
+    }
+    withEnv([
+        "ANSIBLE_TAG=${targetName}",
+        "ANSIBLE_INVENTORY=${params.ANSIBLE_INVENTORY}",
+        "ANSIBLE_VAULT_FILE=${params.ANSIBLE_VAULT_FILE}",
+        "ANSIBLE_SSH_VARS_FILE=${pwd()}/${targetName}-ssh.json",
+        "KAFKA_CLUSTER_ID=${params.KAFKA_CLUSTER_ID ?: ''}",
+        'ANSIBLE_PRIVATE_KEY_FILE=',
+        'ANSIBLE_REMOTE_USER='
+    ]) {
+        withCredentials(bindings) {
+            if (params.ANSIBLE_SSH_CREDENTIALS_ID?.trim()) {
+                // Extra vars override ansible_user/key settings from the external inventory.
+                writeJSON file: "${targetName}-ssh.json", json: [
+                    ansible_user: env.ANSIBLE_REMOTE_USER,
+                    ansible_ssh_private_key_file: env.ANSIBLE_PRIVATE_KEY_FILE
+                ]
+            }
+            sh '''
+                set -eu
+                set +x
+                cd deploy/ansible
+                set -- ansible-playbook playbooks/main.yml \
+                    --inventory "$ANSIBLE_INVENTORY" --tags "$ANSIBLE_TAG" \
+                    --extra-vars "@$ANSIBLE_VAULT_FILE" \
+                    --vault-id "default@$ANSIBLE_VAULT_PASSWORD_FILE"
+                if [ -n "$ANSIBLE_PRIVATE_KEY_FILE" ]; then
+                    set -- "$@" --extra-vars "@$ANSIBLE_SSH_VARS_FILE"
+                fi
+                attempt=1
+                while ! "$@"; do
+                    if [ "$attempt" -ge 2 ]; then
+                        exit 1
+                    fi
+                    attempt=$((attempt + 1))
+                    echo "Retrying $ANSIBLE_TAG after a failed Ansible run..."
+                done
+            '''
+        }
+    }
+}
+
+pipeline {
+    agent { label "${params.AGENT_LABEL ?: 'docker'}" }
+
+    parameters {
+        string(name: 'AGENT_LABEL', defaultValue: 'docker', description: 'Trusted Jenkins agent with the deployment tools installed', trim: true)
+        string(name: 'NAMESPACE', defaultValue: 'panabigdata', description: 'Kubernetes release namespace', trim: true)
+        string(name: 'KUBECONFIG_CREDENTIALS_ID', defaultValue: 'kubernetes-config', description: 'Jenkins secret-file credential containing the target kubeconfig', trim: true)
+        string(name: 'IMAGE_REGISTRY', defaultValue: 'ghcr.io/parsanasirii/pana-big-data', description: 'Application image repository prefix, without a trailing slash', trim: true)
+        string(name: 'IMAGE_TAG', defaultValue: '', description: 'Published application image tag; blank uses the full checked-out commit SHA', trim: true)
+        string(name: 'BASE_COMMIT', defaultValue: '', description: 'Change-detection base; blank uses the previous successful build, or all tracked files on the first build', trim: true)
+        string(name: 'HELM_VALUES_DIR', defaultValue: '', description: 'Absolute trusted-agent directory with one configured <release>.yaml file for every selected Helm release', trim: true)
+        choice(name: 'API_SERVICE_MODE', choices: ['NEVER', 'IF_CHANGED', 'ALWAYS'], description: 'Deploy api-service')
+        choice(name: 'PARQUET_WRITER_MODE', choices: ['NEVER', 'IF_CHANGED', 'ALWAYS'], description: 'Deploy parquet-writer')
+        choice(name: 'PARQUET_MAINTENANCE_MODE', choices: ['NEVER', 'IF_CHANGED', 'ALWAYS'], description: 'Deploy parquet-maintenance')
+        choice(name: 'STARROCKS_WRITER_MODE', choices: ['NEVER', 'IF_CHANGED', 'ALWAYS'], description: 'Deploy starrocks-writer; keep NEVER while a backfill is running')
+        choice(name: 'CUBE_MAKER_MODE', choices: ['NEVER', 'IF_CHANGED', 'ALWAYS'], description: 'Deploy cube-maker')
+        choice(name: 'HDFS_CLIENT_MODE', choices: ['NEVER', 'IF_CHANGED', 'ALWAYS'], description: 'Deploy HDFS client configuration')
+        choice(name: 'POSTGRES_MODE', choices: ['NEVER', 'IF_CHANGED', 'ALWAYS'], description: 'Deploy PostgreSQL')
+        choice(name: 'SCHEMA_REGISTRY_MODE', choices: ['NEVER', 'IF_CHANGED', 'ALWAYS'], description: 'Deploy Schema Registry')
+        choice(name: 'SPARK_MODE', choices: ['NEVER', 'IF_CHANGED', 'ALWAYS'], description: 'Deploy the Spark cluster')
+        choice(name: 'MONITORING_MODE', choices: ['NEVER', 'IF_CHANGED', 'ALWAYS'], description: 'Deploy monitoring')
+        choice(name: 'STARROCKS_MODE', choices: ['NEVER', 'IF_CHANGED', 'ALWAYS'], description: 'Run the StarRocks Ansible roles')
+        choice(name: 'KAFKA_MODE', choices: ['NEVER', 'IF_CHANGED', 'ALWAYS'], description: 'Run the Kafka Ansible role')
+        string(name: 'ANSIBLE_INVENTORY', defaultValue: '', description: 'Absolute trusted-agent inventory file; copy the full inventory tree and configure its group_vars', trim: true)
+        string(name: 'ANSIBLE_VAULT_FILE', defaultValue: '', description: 'Absolute trusted-agent encrypted Ansible vars file; required for selected Ansible targets', trim: true)
+        string(name: 'ANSIBLE_VAULT_PASSWORD_CREDENTIALS_ID', defaultValue: '', description: 'Jenkins secret-file credential containing the Ansible vault password', trim: true)
+        string(name: 'ANSIBLE_SSH_CREDENTIALS_ID', defaultValue: '', description: 'Optional Jenkins SSH username/private-key credential; blank uses the agent SSH configuration', trim: true)
+        string(name: 'ANSIBLE_SSH_PASSWORD_CREDENTIALS_ID', defaultValue: '', description: 'Optional Jenkins secret-text SSH password, exposed to inventory as SSH_PASS', trim: true)
+        string(name: 'KAFKA_CLUSTER_ID', defaultValue: '', description: 'Persistent Kafka cluster UUID; blank requires cluster_id to be set in the external inventory', trim: true)
+    }
+
+    options {
+        skipDefaultCheckout(true)
+        disableConcurrentBuilds()
+        timeout(time: 45, unit: 'MINUTES')
+    }
+
+    stages {
+        stage('Checkout') {
+            steps { checkout scm }
+        }
+
+        stage('Detect Changes') {
+            steps {
+                script {
+                    imageTag = params.IMAGE_TAG?.trim() ?: sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+                    def detector = load 'deploy/pipeline/detectApplications.groovy'
+                    def changedFiles = detector.getChangedFiles(params.BASE_COMMIT ?: env.GIT_PREVIOUS_SUCCESSFUL_COMMIT)
+                    changedApplications = detector.selectChangedApplications(applications, changedFiles)
+                    changedHelmInfrastructure = detector.selectChangedHelmInfrastructure(helmInfrastructureCharts, changedFiles)
+                    changedAnsibleInfrastructure = detector.selectChangedAnsibleInfrastructure(ansibleInfrastructure, changedFiles)
+                    echo "Changed applications: ${changedApplications ?: 'none'}"
+                    echo "Changed Helm infrastructure: ${changedHelmInfrastructure ?: 'none'}"
+                    echo "Changed Ansible infrastructure: ${changedAnsibleInfrastructure ?: 'none'}"
+                }
+            }
+        }
+
+        stage('Select Deployment Targets') {
+            steps {
+                script {
+                    def selectByMode = { name, changed ->
+                        def mode = params[parameterName(name)] ?: 'NEVER'
+                        if (!(mode in ['ALWAYS', 'IF_CHANGED', 'NEVER'])) {
+                            error("Unsupported deployment mode for ${name}: ${mode}")
+                        }
+                        mode == 'ALWAYS' || (mode == 'IF_CHANGED' && changed)
+                    }
+                    applications = applications.findAll { selectByMode(it, changedApplications.contains(it)) }
+                    helmInfrastructureCharts = helmInfrastructureCharts.findAll { name, chart ->
+                        selectByMode(name, changedHelmInfrastructure.contains(name))
+                    }
+                    ansibleInfrastructure = ansibleInfrastructure.findAll {
+                        selectByMode(it, changedAnsibleInfrastructure.contains(it))
+                    }
+                    echo "Applications selected: ${applications ?: 'none'}; image tag: ${imageTag}"
+                    echo "Helm infrastructure selected: ${helmInfrastructureCharts.keySet() ?: 'none'}"
+                    echo "Ansible infrastructure selected: ${ansibleInfrastructure ?: 'none'}"
+                }
+            }
+        }
+
+        stage('Validate Deployment Inputs') {
+            steps {
+                script {
+                    if (applications || helmInfrastructureCharts) {
+                        if (!params.HELM_VALUES_DIR?.startsWith('/')) {
+                            error('HELM_VALUES_DIR must be an absolute directory containing configured per-release values')
+                        }
+                        if (!params.KUBECONFIG_CREDENTIALS_ID?.trim()) {
+                            error('KUBECONFIG_CREDENTIALS_ID is required for Kubernetes deployments')
+                        }
+                        if (!(params.NAMESPACE ==~ /[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?/)) {
+                            error('NAMESPACE must be a valid Kubernetes namespace')
+                        }
+                        if (applications && (!(imageTag ==~ /[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}/) ||
+                                !(params.IMAGE_REGISTRY ==~ /[a-z0-9][a-z0-9.:_-]*(\/[a-z0-9][a-z0-9._-]*)+/))) {
+                            error('IMAGE_TAG or IMAGE_REGISTRY has an invalid container image format')
+                        }
+                        def charts = [:] + helmInfrastructureCharts
+                        applications.each { charts[it] = "deploy/helm/apps/${it}" }
+                        withCluster {
+                            charts.each { name, chart ->
+                                withHelmValues(name, chart, applications.contains(name) ? imageTag : '') {
+                                    sh '''
+                                        set -eu
+                                        set +x
+                                        test -r "$VALUES_FILE" || { echo "Missing release values: $VALUES_FILE"; exit 1; }
+                                        set -- helm template "$RELEASE_NAME" "$CHART_PATH" \
+                                            --kubeconfig "$KUBECONFIG" --namespace "$NAMESPACE" --values "$VALUES_FILE"
+                                        if [ -n "$IMAGE_TAG" ]; then
+                                            set -- "$@" --set-string "image.repository=$IMAGE_REPOSITORY" \
+                                                --set-string "image.tag=$IMAGE_TAG"
+                                        fi
+                                        "$@" >/dev/null
+                                    '''
+                                }
+                            }
+                        }
+                    }
+                    if (ansibleInfrastructure) {
+                        if (!params.ANSIBLE_INVENTORY?.startsWith('/') || !params.ANSIBLE_VAULT_FILE?.startsWith('/') ||
+                                !params.ANSIBLE_VAULT_PASSWORD_CREDENTIALS_ID?.trim()) {
+                            error('Ansible targets require absolute ANSIBLE_INVENTORY and ANSIBLE_VAULT_FILE paths and ANSIBLE_VAULT_PASSWORD_CREDENTIALS_ID')
+                        }
+                        withEnv(["ANSIBLE_INVENTORY=${params.ANSIBLE_INVENTORY}", "ANSIBLE_VAULT_FILE=${params.ANSIBLE_VAULT_FILE}"]) {
+                            sh '''
+                                set -eu
+                                set +x
+                                test -r "$ANSIBLE_INVENTORY"
+                                test -r "$ANSIBLE_VAULT_FILE"
+                                head -n 1 "$ANSIBLE_VAULT_FILE" | grep -q '^[$]ANSIBLE_VAULT;'
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Ensure Infrastructure') {
+            when { expression { applications || helmInfrastructureCharts || ansibleInfrastructure } }
+            steps {
+                script {
+                    if (applications || helmInfrastructureCharts) {
+                        withCluster {
+                            sh '''
+                                set -eu
+                                kubectl --kubeconfig "$KUBECONFIG" create namespace "$NAMESPACE" \
+                                    --dry-run=client -o yaml | kubectl --kubeconfig "$KUBECONFIG" apply -f -
+                            '''
+                        }
+                    }
+                    def branches = [:]
+                    helmInfrastructureCharts.each { infrastructureName, chartPath ->
+                        def name = infrastructureName
+                        def chart = chartPath
+                        branches[name] = {
+                            stage("Ensure ${name}") { deployHelm(name, chart) }
+                        }
+                    }
+                    ansibleInfrastructure.each { infrastructureName ->
+                        def name = infrastructureName
+                        branches[name] = {
+                            stage("Ensure ${name}") { deployAnsible(name) }
+                        }
+                    }
+                    if (branches) { parallel branches }
+                }
+            }
+        }
+
+        stage('Deploy Applications') {
+            when { expression { !applications.isEmpty() } }
+            steps {
+                script {
+                    def branches = [:]
+                    applications.each { appName ->
+                        def name = appName
+                        branches[name] = {
+                            stage("Deploy ${name}") {
+                                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE', catchInterruptions: false,
+                                        message: "Application ${name} deployment failed; verify the published image and values") {
+                                    deployHelm(name, "deploy/helm/apps/${name}", imageTag)
+                                }
+                            }
+                        }
+                    }
+                    parallel branches
+                }
+            }
+        }
+    }
+
+    post {
+        success { echo 'CD SUCCESS' }
+        failure { echo 'CD FAILED' }
+        always { deleteDir() }
+    }
+}

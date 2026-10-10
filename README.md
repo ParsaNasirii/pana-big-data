@@ -221,7 +221,7 @@ Versions below come from the repository's POMs and deployment configuration.
 | Aggregate storage | PostgreSQL 17 / Spilo | Persisted analytical cubes |
 | API | Spring Boot 3.5.16 · OpenAPI | Raw and aggregate query endpoints |
 | Observability | Micrometer · Prometheus · Grafana | Metrics, alerts, and dashboards |
-| Delivery | Ansible · Helm · Jib · GitHub Actions | Provisioning, packaging, and verification |
+| Delivery | Ansible · Helm · Jib · Jenkins · GitHub Actions | Provisioning, packaging, verification, and deployment |
 
 ## Quick start
 
@@ -302,6 +302,10 @@ Start with the dedicated guides; they document the required inputs and commands.
 | **2. Cluster services** | HDFS client settings, Schema Registry, PostgreSQL, Spark, and monitoring | [Helm guide](deploy/helm/README.md) |
 | **3. Applications** | Published images, endpoints, ConfigMaps, and existing Secrets | [Application charts](deploy/helm/apps) |
 | **4. Input data** | An external Avro event producer and registered schemas | [Archive schema](apps/parquet-writer/src/main/java/io/github/panabigdata/parquet/NetFlowParquetSchema.java) |
+
+For Jenkins-driven image publishing, deployment, and manual Backfill runs, use
+the [Jenkins pipeline guide](deploy/pipeline/README.md). Its CI, CD, and Jobs
+pipelines use your configured registry, agent, cluster, and credentials.
 
 The example topology uses documentation addresses `192.0.2.11`–`192.0.2.14`.
 Replace them with your own hosts. The example namespace and StarRocks database
@@ -419,8 +423,13 @@ versions—for example, Kafka tests use 3.8.0 and PostgreSQL tests use 15.
 These are recorded local results for the current source snapshot, not a live
 cluster certification or a performance benchmark. The
 [GitHub Actions workflow](.github/workflows/ci.yml) runs `mvn verify` on pushes,
-pull requests, and manual invocations. Deployment and image publishing are
-separate operator steps.
+pull requests, and manual invocations.
+
+The optional [Jenkins pipelines](deploy/pipeline/README.md) cover application
+selection, verification, SonarQube, Jib image publication, Helm/Ansible
+deployment, and on-demand Backfill. Image publication, SonarQube, and deployment
+require explicit configuration and selection; they are disabled by default.
+Both CI entry points are available independently.
 
 ## Reliability and boundaries
 
@@ -457,7 +466,7 @@ pana-big-data/
 ├── deploy/
 │   ├── ansible/                Kafka and StarRocks provisioning
 │   ├── helm/                   Application and infrastructure charts
-│   └── pipeline/               Public Maven settings
+│   └── pipeline/               Jenkins CI/CD, on-demand jobs, and public Maven settings
 ├── docs/assets/                README artwork
 ├── .github/workflows/          Build and test automation
 └── pom.xml                     Maven reactor and shared versions

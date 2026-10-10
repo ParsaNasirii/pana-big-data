@@ -1,0 +1,333 @@
+def serialTestProjectNames = ['starrocks-writer', 'shared/kafka-consumer-service', 'starrocks-backfill']
+def mavenImage = 'maven:3.9.9-eclipse-temurin-17'
+def mavenCachePathInAgent
+def sonarCachePathInAgent
+def imageTag
+def dockerSocketGroupId
+def parallelTestWorkerCount
+def applicationsToBuild = []
+def applicationsToTest = []
+def applicationsToPush = []
+def projectsToBuild = []
+def projectsToTest = []
+def serialProjectsToTest = []
+def parallelProjectsToTest = []
+
+def parameterName(String appName) {
+    return "${appName.toUpperCase().replace('-', '_')}_MODE"
+}
+
+def directMavenModules(String root) {
+    return withEnv(["MODULE_ROOT=${root}"]) {
+        sh(
+            script: 'find "$MODULE_ROOT" -mindepth 2 -maxdepth 2 -type f -name pom.xml -printf \'%h\\n\' | sort',
+            returnStdout: true
+        ).readLines().collect { path -> path.substring(root.length() + 1) }
+    }
+}
+
+def mavenProjectPaths(List projectNames) {
+    return projectNames.collect { projectName -> "apps/${projectName}" }.join(',')
+}
+
+def testMavenProject(String projectName) {
+    stage("Test ${projectName}") {
+        withEnv(["TEST_MAVEN_PROJECTS=apps/${projectName}"]) {
+            sh '''
+                set -eu
+                mvn -B \
+                  --projects "$TEST_MAVEN_PROJECTS" \
+                  -s "$WORKSPACE/deploy/pipeline/maven-settings.xml" \
+                  -gs "$WORKSPACE/deploy/pipeline/maven-settings.xml" \
+                  -Dmaven.repo.local=/maven-cache \
+                  verify
+            '''
+        }
+    }
+}
+
+def createTestWorker(String workerName, List projectNames, Map queueState) {
+    return {
+        while (true) {
+            def projectName = null
+            lock(resource: 'pana-big-data-ci-application-test-queue') {
+                if (queueState.nextIndex < projectNames.size()) {
+                    projectName = projectNames[queueState.nextIndex]
+                    queueState.nextIndex++
+                }
+            }
+            if (projectName == null) {
+                break
+            }
+            echo "${workerName} selected ${projectName}"
+            testMavenProject(projectName)
+        }
+    }
+}
+
+def createTestWorkers(List projectNames, int maxParallelWorkers) {
+    def workerCount = Math.min(maxParallelWorkers, projectNames.size())
+    def queueState = [nextIndex: 0]
+    def testBranches = [:]
+    for (int workerIndex = 0; workerIndex < workerCount; workerIndex++) {
+        def branchName = "Worker ${workerIndex + 1}"
+        testBranches[branchName] = createTestWorker("Test ${branchName}", projectNames, queueState)
+    }
+    return testBranches
+}
+
+pipeline {
+    agent { label "${params.AGENT_LABEL ?: 'docker'}" }
+
+    parameters {
+        string(name: 'AGENT_LABEL', defaultValue: 'docker', description: 'Linux Jenkins agent with Git and Docker', trim: true)
+        string(name: 'BASE_COMMIT', defaultValue: '', description: 'Optional comparison commit; defaults to the previous successful build, or all files when unavailable', trim: true)
+        string(name: 'PARALLEL_TEST_WORKERS', defaultValue: '3', description: 'Maximum parallel workers after the heavy integration tests finish', trim: true)
+        booleanParam(name: 'PUSH_IMAGES', defaultValue: false, description: 'Publish the images selected by application modes after successful CI')
+        string(name: 'IMAGE_REGISTRY', defaultValue: 'ghcr.io/parsanasirii/pana-big-data', description: 'Registry and repository prefix for application images', trim: true)
+        string(name: 'REGISTRY_CREDENTIALS_ID', defaultValue: 'container-registry', description: 'Jenkins username/password credential used only when PUSH_IMAGES is enabled', trim: true)
+        booleanParam(name: 'RUN_SONAR', defaultValue: false, description: 'Run SonarQube analysis and wait for its quality gate')
+        string(name: 'SONAR_INSTALLATION', defaultValue: 'sonarqube', description: 'SonarQube installation configured in Jenkins', trim: true)
+        string(name: 'SONAR_PROJECT_KEY', defaultValue: 'pana-big-data', description: 'SonarQube project key', trim: true)
+        string(name: 'SONAR_PROJECT_NAME', defaultValue: 'Pana Big Data', description: 'SonarQube project name', trim: true)
+        choice(name: 'PARQUET_WRITER_MODE', choices: ['IF_CHANGED', 'NEVER', 'TEST_ONLY', 'PUSH_ONLY', 'TEST_AND_PUSH'], description: 'Parquet Writer CI mode; image publishing also requires PUSH_IMAGES')
+        choice(name: 'PARQUET_MAINTENANCE_MODE', choices: ['IF_CHANGED', 'NEVER', 'TEST_ONLY', 'PUSH_ONLY', 'TEST_AND_PUSH'], description: 'Parquet Maintenance CI mode; image publishing also requires PUSH_IMAGES')
+        choice(name: 'STARROCKS_WRITER_MODE', choices: ['IF_CHANGED', 'NEVER', 'TEST_ONLY', 'PUSH_ONLY', 'TEST_AND_PUSH'], description: 'StarRocks Writer CI mode; image publishing also requires PUSH_IMAGES')
+        choice(name: 'STARROCKS_BACKFILL_MODE', choices: ['IF_CHANGED', 'NEVER', 'TEST_ONLY', 'PUSH_ONLY', 'TEST_AND_PUSH'], description: 'StarRocks Backfill CI mode; image publishing also requires PUSH_IMAGES')
+        choice(name: 'CUBE_MAKER_MODE', choices: ['IF_CHANGED', 'NEVER', 'TEST_ONLY', 'PUSH_ONLY', 'TEST_AND_PUSH'], description: 'Cube Maker CI mode; image publishing also requires PUSH_IMAGES')
+        choice(name: 'API_SERVICE_MODE', choices: ['IF_CHANGED', 'NEVER', 'TEST_ONLY', 'PUSH_ONLY', 'TEST_AND_PUSH'], description: 'API Service CI mode; image publishing also requires PUSH_IMAGES')
+    }
+
+    options {
+        skipDefaultCheckout(true)
+        disableConcurrentBuilds()
+        timeout(time: 60, unit: 'MINUTES')
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Select Changed Applications') {
+            steps {
+                script {
+                    def applicationDetector = load 'deploy/pipeline/detectApplications.groovy'
+                    def allApplications = directMavenModules('apps').findAll { it != 'shared' }
+                    def changedFiles = applicationDetector.getChangedFiles(
+                        params.BASE_COMMIT?.trim() ?: env.GIT_PREVIOUS_SUCCESSFUL_COMMIT
+                    )
+                    def changedApplications = applicationDetector.selectChangedApplications(allApplications, changedFiles)
+
+                    allApplications.each { appName ->
+                        def mode = params[parameterName(appName)] ?: 'IF_CHANGED'
+                        if (!(mode in ['IF_CHANGED', 'NEVER', 'TEST_ONLY', 'PUSH_ONLY', 'TEST_AND_PUSH'])) {
+                            error("Unsupported CI mode for ${appName}: ${mode}")
+                        }
+                        if (mode == 'IF_CHANGED') {
+                            mode = changedApplications.contains(appName) ? 'TEST_AND_PUSH' : 'NEVER'
+                        }
+                        if (mode in ['TEST_ONLY', 'TEST_AND_PUSH']) {
+                            applicationsToTest.add(appName)
+                        }
+                        if (mode in ['PUSH_ONLY', 'TEST_AND_PUSH']) {
+                            applicationsToPush.add(appName)
+                        }
+                    }
+                    applicationsToBuild = allApplications.findAll { appName ->
+                        applicationsToTest.contains(appName) || applicationsToPush.contains(appName)
+                    }
+                    def sharedModulesToTest = applicationsToTest.isEmpty() ? [] :
+                        directMavenModules('apps/shared').collect { moduleName -> "shared/${moduleName}".toString() }
+                    projectsToTest = applicationsToTest + sharedModulesToTest
+                    // Install every shared test target before tests use the local repository.
+                    projectsToBuild = applicationsToBuild + sharedModulesToTest
+                    serialProjectsToTest = projectsToTest.findAll { serialTestProjectNames.contains(it) }
+                    parallelProjectsToTest = projectsToTest.findAll { !serialTestProjectNames.contains(it) }
+
+                    echo "Applications selected for tests: ${applicationsToTest ?: 'none'}"
+                    echo "Applications selected for image publishing: ${applicationsToPush ?: 'none'} (PUSH_IMAGES=${params.PUSH_IMAGES})"
+                }
+            }
+        }
+
+        stage('Initialize Build') {
+            when {
+                expression { !applicationsToBuild.isEmpty() }
+            }
+            steps {
+                script {
+                    try {
+                        parallelTestWorkerCount = (params.PARALLEL_TEST_WORKERS ?: '3').toInteger()
+                    } catch (NumberFormatException ignored) {
+                        error('PARALLEL_TEST_WORKERS must be a positive integer')
+                    }
+                    if (parallelTestWorkerCount < 1) {
+                        error('PARALLEL_TEST_WORKERS must be a positive integer')
+                    }
+                    if (params.PUSH_IMAGES && (!params.IMAGE_REGISTRY?.trim() || !params.REGISTRY_CREDENTIALS_ID?.trim())) {
+                        error('IMAGE_REGISTRY and REGISTRY_CREDENTIALS_ID are required when PUSH_IMAGES is enabled')
+                    }
+                    if (params.RUN_SONAR && (!params.SONAR_INSTALLATION?.trim() || !params.SONAR_PROJECT_KEY?.trim())) {
+                        error('SONAR_INSTALLATION and SONAR_PROJECT_KEY are required when RUN_SONAR is enabled')
+                    }
+                    imageTag = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+                    dockerSocketGroupId = sh(script: "stat -c '%g' /var/run/docker.sock", returnStdout: true).trim()
+                    mavenCachePathInAgent = "${env.HOME}/.m2/repository"
+                    sonarCachePathInAgent = "${env.HOME}/.sonar"
+                    withEnv(["MAVEN_CACHE_PATH=${mavenCachePathInAgent}", "SONAR_CACHE_PATH=${sonarCachePathInAgent}"]) {
+                        sh 'mkdir -p "$MAVEN_CACHE_PATH" "$SONAR_CACHE_PATH"'
+                    }
+                    echo "Image tag: ${imageTag}"
+                }
+            }
+        }
+
+        stage('Build and Test') {
+            when {
+                beforeAgent true
+                expression { !applicationsToBuild.isEmpty() }
+            }
+            agent {
+                docker {
+                    image "${mavenImage}"
+                    reuseNode true
+                    args "-v '${mavenCachePathInAgent}:/maven-cache' -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro -v /var/run/docker.sock:/var/run/docker.sock --group-add ${dockerSocketGroupId}"
+                }
+            }
+            steps {
+                withEnv(["MAVEN_PROJECTS=${mavenProjectPaths(projectsToBuild)}"]) {
+                    sh '''
+                        set -eu
+                        mvn -B \
+                          --projects "$MAVEN_PROJECTS" --also-make \
+                          -s "$WORKSPACE/deploy/pipeline/maven-settings.xml" \
+                          -gs "$WORKSPACE/deploy/pipeline/maven-settings.xml" \
+                          -Dmaven.repo.local=/maven-cache \
+                          -DskipTests clean install
+                    '''
+                }
+                script {
+                    serialProjectsToTest.each { projectName -> testMavenProject(projectName) }
+                    if (!parallelProjectsToTest.isEmpty()) {
+                        stage('Test Applications') {
+                            def testWorkers = createTestWorkers(parallelProjectsToTest, parallelTestWorkerCount)
+                            if (testWorkers.size() == 1) {
+                                testWorkers.values().first().call()
+                            } else {
+                                parallel testWorkers
+                            }
+                        }
+                    }
+                }
+            }
+            post {
+                always {
+                    junit(testResults: '**/target/surefire-reports/*.xml', allowEmptyResults: true)
+                }
+            }
+        }
+
+        stage('SonarQube Analysis and Quality Gate') {
+            when {
+                beforeAgent true
+                expression { params.RUN_SONAR && !applicationsToTest.isEmpty() }
+            }
+            agent {
+                docker {
+                    image "${mavenImage}"
+                    reuseNode true
+                    args "-v '${mavenCachePathInAgent}:/maven-cache' -v '${sonarCachePathInAgent}:/sonar-cache' -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro"
+                }
+            }
+            steps {
+                script {
+                    withEnv([
+                        "MAVEN_PROJECTS=${mavenProjectPaths(['shared'] + projectsToTest)}",
+                        "SONAR_PROJECT_KEY=${params.SONAR_PROJECT_KEY.trim()}",
+                        "SONAR_PROJECT_NAME=${params.SONAR_PROJECT_NAME}"
+                    ]) {
+                        withSonarQubeEnv(params.SONAR_INSTALLATION.trim()) {
+                            sh '''
+                                set -eu
+                                set +x
+                                mvn -B \
+                                  --projects "$MAVEN_PROJECTS" --also-make \
+                                  -s "$WORKSPACE/deploy/pipeline/maven-settings.xml" \
+                                  -gs "$WORKSPACE/deploy/pipeline/maven-settings.xml" \
+                                  -Dmaven.repo.local=/maven-cache \
+                                  -Dsonar.userHome=/sonar-cache \
+                                  -Dsonar.projectKey="$SONAR_PROJECT_KEY" \
+                                  -Dsonar.projectName="$SONAR_PROJECT_NAME" \
+                                  sonar:sonar
+                            '''
+                        }
+                    }
+                    timeout(time: 10, unit: 'MINUTES') {
+                        def qualityGate = waitForQualityGate(abortPipeline: false)
+                        if (qualityGate.status != 'OK') {
+                            unstable("SonarQube Quality Gate failed: ${qualityGate.status}")
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Push Images') {
+            when {
+                beforeAgent true
+                expression {
+                    params.PUSH_IMAGES && currentBuild.currentResult == 'SUCCESS' && !applicationsToPush.isEmpty()
+                }
+            }
+            agent {
+                docker {
+                    image "${mavenImage}"
+                    reuseNode true
+                    args "-v '${mavenCachePathInAgent}:/maven-cache' -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro"
+                }
+            }
+            steps {
+                script {
+                    withCredentials([usernamePassword(
+                        credentialsId: params.REGISTRY_CREDENTIALS_ID.trim(),
+                        usernameVariable: 'REGISTRY_USERNAME',
+                        passwordVariable: 'REGISTRY_PASSWORD'
+                    )]) {
+                        withEnv([
+                            "MAVEN_PROJECTS=${mavenProjectPaths(applicationsToPush)}",
+                            "IMAGE_REGISTRY=${params.IMAGE_REGISTRY.trim()}",
+                            "IMAGE_TAG=${imageTag}"
+                        ]) {
+                            sh '''
+                                set -eu
+                                set +x
+                                mvn -B \
+                                  --projects "$MAVEN_PROJECTS" \
+                                  -s "$WORKSPACE/deploy/pipeline/maven-settings.xml" \
+                                  -gs "$WORKSPACE/deploy/pipeline/maven-settings.xml" \
+                                  -Dmaven.repo.local=/maven-cache \
+                                  -Djib.configDirectory=/tmp/pana-jib-config \
+                                  -Djib.baseImageCache=/maven-cache/jib \
+                                  -DskipTests \
+                                  -Dimage.registry="$IMAGE_REGISTRY" \
+                                  -Dimage.tag="$IMAGE_TAG" \
+                                  -Djib.to.auth.username="$REGISTRY_USERNAME" \
+                                  -Djib.to.auth.password="$REGISTRY_PASSWORD" \
+                                  jib:build
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            cleanWs(deleteDirs: true)
+        }
+    }
+}

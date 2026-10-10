@@ -1,0 +1,210 @@
+import groovy.transform.Field
+
+def jobs = ['starrocks-backfill']
+def jobValues = [:]
+
+@Field def jobResources = ['starrocks-backfill': 'starrocks-backfill']
+@Field def jobConflicts = [
+    'starrocks-backfill': [[name: 'starrocks-writer', selector: 'app.kubernetes.io/instance=starrocks-writer']]
+]
+
+def parameterName(String targetName) {
+    return "${targetName.toUpperCase().replace('-', '_')}_RUN"
+}
+
+def withCluster(Closure body) {
+    withCredentials([file(credentialsId: params.KUBECONFIG_CREDENTIALS_ID, variable: 'KUBECONFIG')]) {
+        withEnv(["NAMESPACE=${params.NAMESPACE}"]) {
+            body()
+        }
+    }
+}
+
+def checkConflicts(String jobName) {
+    def resource = jobResources[jobName]
+    withEnv(["JOB_RESOURCE=${resource}"]) {
+        def existing = sh(script: 'kubectl get job "$JOB_RESOURCE" -n "$NAMESPACE" --ignore-not-found -o json', returnStdout: true).trim()
+        if (existing) {
+            def status = readJSON(text: existing, returnPojo: true).status
+            def finished = status?.conditions?.any { it.type in ['Complete', 'Failed'] && it.status == 'True' }
+            if (!finished) {
+                error("${jobName}: Job ${resource} is already running or waiting to start")
+            }
+        }
+    }
+    // Pending and terminating pods also block another restore or a running writer.
+    def conflicts = [[name: jobName, selector: "job-name=${resource}"]] + (jobConflicts[jobName] ?: [])
+    conflicts.each { conflict ->
+        withEnv(["CONFLICT_SELECTOR=${conflict.selector}", "CONFLICT_NAMESPACE=${conflict.namespace ?: params.NAMESPACE}"]) {
+            def pods = readJSON(
+                text: sh(script: 'kubectl get pods -n "$CONFLICT_NAMESPACE" -l "$CONFLICT_SELECTOR" -o json', returnStdout: true),
+                returnPojo: true
+            ).items
+            def active = pods.findAll { !(it.status?.phase in ['Succeeded', 'Failed']) }
+            if (active) {
+                error("${jobName} conflicts with ${conflict.name}: ${active.collect { it.metadata.name }.join(', ')}")
+            }
+        }
+    }
+}
+
+def runJob(String jobName, String imageTag, Map values) {
+    writeJSON file: "${jobName}-values.json", json: values + [image: [
+        repository: "${params.IMAGE_REGISTRY}/${jobName}", tag: imageTag
+    ]]
+    withEnv([
+        "RELEASE_NAME=${jobName}",
+        "CHART_PATH=deploy/helm/apps/${jobName}",
+        "JOB_RESOURCE=${jobResources[jobName]}",
+        "ENVIRONMENT_VALUES_FILE=${params.HELM_VALUES_DIR}/${jobName}.yaml",
+        "VALUES_FILE=${jobName}-values.json",
+        // Two 20-minute SQL steps plus Job startup and cleanup.
+        'HELM_TIMEOUT=50m'
+    ]) {
+        boolean started = false
+        try {
+            sh '''
+                set -eu
+                set +x
+                test -r "$ENVIRONMENT_VALUES_FILE" || { echo "Missing release values: $ENVIRONMENT_VALUES_FILE"; exit 1; }
+                helm template "$RELEASE_NAME" "$CHART_PATH" \
+                    --namespace "$NAMESPACE" --values "$ENVIRONMENT_VALUES_FILE" --values "$VALUES_FILE" >/dev/null
+            '''
+            checkConflicts(jobName)
+            sh 'kubectl delete job "$JOB_RESOURCE" -n "$NAMESPACE" --ignore-not-found --wait=true'
+            started = true
+            // Helm waits for the hook. Do not roll back a restore: database writes cannot be undone.
+            sh '''
+                set -eu
+                set +x
+                helm upgrade --install "$RELEASE_NAME" "$CHART_PATH" \
+                    --namespace "$NAMESPACE" --values "$ENVIRONMENT_VALUES_FILE" --values "$VALUES_FILE" \
+                    --wait --wait-for-jobs --timeout "$HELM_TIMEOUT"
+                kubectl wait -n "$NAMESPACE" --for=create pod \
+                    -l "job-name=$JOB_RESOURCE" --timeout=120s
+            '''
+            tee("${jobName}.log") {
+                sh 'kubectl logs -n "$NAMESPACE" -f --pod-running-timeout=10m "job/$JOB_RESOURCE"'
+            }
+            sh 'kubectl wait -n "$NAMESPACE" --for=condition=complete "job/$JOB_RESOURCE" --timeout=120s'
+        } catch (Exception failure) {
+            if (started) {
+                sh script: 'kubectl describe job "$JOB_RESOURCE" -n "$NAMESPACE"', returnStatus: true
+            }
+            throw failure
+        } finally {
+            if (started) {
+                // Retain failure logs and stop an unfinished Job started by this build.
+                sh script: '''
+                    set +e
+                    kubectl logs -n "$NAMESPACE" "job/$JOB_RESOURCE" > "$RELEASE_NAME-final.log" 2>&1
+                    active=$(kubectl get job "$JOB_RESOURCE" -n "$NAMESPACE" -o jsonpath='{.status.active}')
+                    if [ "${active:-0}" -gt 0 ]; then
+                        kubectl delete job "$JOB_RESOURCE" -n "$NAMESPACE" --wait=true
+                    fi
+                ''', returnStatus: true
+            }
+        }
+    }
+}
+
+pipeline {
+    agent { label "${params.AGENT_LABEL ?: 'docker'}" }
+
+    parameters {
+        string(name: 'AGENT_LABEL', defaultValue: 'docker', description: 'Trusted Jenkins agent with Git, Helm 3, and kubectl installed', trim: true)
+        string(name: 'NAMESPACE', defaultValue: 'panabigdata', description: 'Existing Kubernetes namespace containing the HDFS config and database Secret', trim: true)
+        string(name: 'KUBECONFIG_CREDENTIALS_ID', defaultValue: 'kubernetes-config', description: 'Jenkins secret-file credential containing the target kubeconfig', trim: true)
+        string(name: 'IMAGE_REGISTRY', defaultValue: 'ghcr.io/parsanasirii/pana-big-data', description: 'Application image repository prefix, without a trailing slash', trim: true)
+        string(name: 'HELM_VALUES_DIR', defaultValue: '', description: 'Absolute trusted-agent directory containing configured starrocks-backfill.yaml values', trim: true)
+        booleanParam(name: 'STARROCKS_BACKFILL_RUN', defaultValue: false, description: 'Restore netflow_raw; keep starrocks-writer scaled to zero until this Job finishes')
+        string(name: 'STARROCKS_BACKFILL_IMAGE_TAG', defaultValue: '', description: 'Required when running backfill: an image tag published by successful CI, normally its full commit SHA', trim: true)
+        string(name: 'STARROCKS_BACKFILL_START', defaultValue: '', description: 'Inclusive start timestamp with timezone, e.g. 2026-09-20T00:00:00Z', trim: true)
+        string(name: 'STARROCKS_BACKFILL_END', defaultValue: '', description: 'Exclusive end timestamp with timezone, e.g. 2026-09-21T00:00:00Z', trim: true)
+    }
+
+    options {
+        skipDefaultCheckout(true)
+        disableConcurrentBuilds()
+        timeout(time: 150, unit: 'MINUTES')
+    }
+
+    stages {
+        stage('Checkout') {
+            steps { checkout scm }
+        }
+
+        stage('Select Job Targets') {
+            steps {
+                script {
+                    jobs = jobs.findAll { params[parameterName(it)] == true }
+                    jobValues = [
+                        'starrocks-backfill': [backfill: [
+                            start: params.STARROCKS_BACKFILL_START?.trim(),
+                            end: params.STARROCKS_BACKFILL_END?.trim()
+                        ]]
+                    ]
+                    echo "Jobs selected for execution: ${jobs ?: 'none'}"
+                }
+            }
+        }
+
+        stage('Validate Selected Jobs') {
+            when { expression { !jobs.isEmpty() } }
+            steps {
+                script {
+                    if (!(params.STARROCKS_BACKFILL_IMAGE_TAG ==~ /[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}/)) {
+                        error('STARROCKS_BACKFILL_IMAGE_TAG is required and must be a valid published image tag')
+                    }
+                    if (!jobValues['starrocks-backfill'].backfill.start || !jobValues['starrocks-backfill'].backfill.end) {
+                        error('STARROCKS_BACKFILL_START and STARROCKS_BACKFILL_END are required')
+                    }
+                    if (!params.HELM_VALUES_DIR?.startsWith('/') || !params.KUBECONFIG_CREDENTIALS_ID?.trim()) {
+                        error('An absolute HELM_VALUES_DIR and KUBECONFIG_CREDENTIALS_ID are required')
+                    }
+                    if (!(params.NAMESPACE ==~ /[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?/)) {
+                        error('NAMESPACE must be a valid Kubernetes namespace')
+                    }
+                    if (!(params.IMAGE_REGISTRY ==~ /[a-z0-9][a-z0-9.:_-]*(\/[a-z0-9][a-z0-9._-]*)+/)) {
+                        error('IMAGE_REGISTRY must be a valid container image repository prefix')
+                    }
+                    withCluster {
+                        jobs.each { checkConflicts(it) }
+                    }
+                }
+            }
+        }
+
+        stage('Run Jobs') {
+            when { expression { !jobs.isEmpty() } }
+            steps {
+                script {
+                    def branches = [:]
+                    jobs.each { jobName ->
+                        def name = jobName
+                        branches[name] = {
+                            stage("Run ${name}") {
+                                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE', catchInterruptions: false,
+                                        message: "Job ${name} failed") {
+                                    withCluster {
+                                        runJob(name, params.STARROCKS_BACKFILL_IMAGE_TAG.trim(), jobValues[name])
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    parallel branches
+                }
+            }
+        }
+    }
+
+    post {
+        success { echo 'JOBS SUCCESS' }
+        failure { echo 'JOBS FAILED' }
+        always {
+            archiveArtifacts artifacts: '*.log', allowEmptyArchive: true
+            deleteDir()
+        }
+    }
+}
