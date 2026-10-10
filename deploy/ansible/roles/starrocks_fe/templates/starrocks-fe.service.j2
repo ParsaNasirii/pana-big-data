@@ -1,0 +1,18 @@
+
+[Unit]
+Description=Apache StarRocks FE
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ starrocks_user }}
+Group={{ starrocks_user }}
+Environment="JAVA_HOME={{ starrocks_java_home }}"
+Environment="PATH={{ starrocks_java_home }}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart={{ starrocks_fe_home }}/bin/start_fe.sh --logconsole{{ ' --helper ' ~ starrocks_fe_helper if starrocks_fe_helper else '' }}
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

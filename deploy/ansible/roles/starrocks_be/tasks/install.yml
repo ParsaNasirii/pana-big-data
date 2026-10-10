@@ -1,0 +1,44 @@
+---
+- name: Ensure BE directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ starrocks_user }}"
+    group: "{{ starrocks_user }}"
+    mode: "0755"
+  loop:
+    - "{{ starrocks_be_home }}"
+    - "{{ starrocks_be_home }}/conf"
+    - "{{ starrocks_be_storage_root }}"
+    - "{{ starrocks_be_log_dir }}"
+
+- name: Render BE configuration file (be.conf)
+  ansible.builtin.template:
+    src: be.conf.j2
+    dest: "{{ starrocks_be_home }}/conf/be.conf"
+    owner: "{{ starrocks_user }}"
+    group: "{{ starrocks_user }}"
+    mode: "0644"
+  notify:
+    - reload systemd daemon
+    - restart starrocks-be
+
+- name: Render starrocks-be systemd unit
+  ansible.builtin.template:
+    src: starrocks-be.service.j2
+    dest: /etc/systemd/system/starrocks-be.service
+    mode: "0644"
+  notify:
+    - reload systemd daemon
+    - restart starrocks-be
+
+- name: Collect service facts (restart guard for the BE unit)
+  ansible.builtin.service_facts:
+
+- name: Flush handlers so systemd reloads a changed unit before enabling
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable starrocks-be service (without starting it)
+  ansible.builtin.systemd:
+    name: starrocks-be
+    enabled: true

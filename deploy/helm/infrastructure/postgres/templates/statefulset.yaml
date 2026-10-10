@@ -1,0 +1,146 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "postgres.name" . }}
+spec:
+  serviceName: {{ include "postgres.name" . }}
+  replicas: {{ .Values.replicaCount }}
+
+  selector:
+    matchLabels:
+      app: {{ include "postgres.name" . }}
+
+  template:
+    metadata:
+      labels:
+        app: {{ include "postgres.name" . }}
+        cluster-name: {{ include "postgres.name" . }}
+
+    spec:
+      serviceAccountName: {{ include "postgres.name" . }}
+
+      containers:
+        - name: {{ include "postgres.name" . }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+
+          ports:
+            - name: {{ include "postgres.name" . }}
+              containerPort: 5432
+
+            - name: patroni
+              containerPort: 8008
+
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+
+            - name: PGUSER_SUPERUSER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "postgres.existingSecret is required" .Values.postgres.existingSecret | quote }}
+                  key: username
+
+            - name: PGPASSWORD_SUPERUSER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "postgres.existingSecret is required" .Values.postgres.existingSecret | quote }}
+                  key: password
+
+            - name: PGUSER_STANDBY
+              value: replicator
+
+            - name: PGPASSWORD_STANDBY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "postgres.existingSecret is required" .Values.postgres.existingSecret | quote }}
+                  key: replication-password
+
+            - name: SCOPE
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "postgres.resourceName" (dict "root" . "component" "patroni") }}
+                  key: SCOPE
+
+            - name: PGROOT
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "postgres.resourceName" (dict "root" . "component" "patroni") }}
+                  key: PGROOT
+
+            - name: DCS_ENABLE_KUBERNETES_API
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "postgres.resourceName" (dict "root" . "component" "patroni") }}
+                  key: DCS_ENABLE_KUBERNETES_API
+
+            - name: KUBERNETES_USE_CONFIGMAPS
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "postgres.resourceName" (dict "root" . "component" "patroni") }}
+                  key: KUBERNETES_USE_CONFIGMAPS
+
+            - name: KUBERNETES_SCOPE_LABEL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "postgres.resourceName" (dict "root" . "component" "patroni") }}
+                  key: KUBERNETES_SCOPE_LABEL
+
+            - name: KUBERNETES_ROLE_LABEL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "postgres.resourceName" (dict "root" . "component" "patroni") }}
+                  key: KUBERNETES_ROLE_LABEL
+
+            - name: KUBERNETES_LEADER_LABEL_VALUE
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "postgres.resourceName" (dict "root" . "component" "patroni") }}
+                  key: KUBERNETES_LEADER_LABEL_VALUE
+
+            - name: KUBERNETES_STANDBY_LEADER_LABEL_VALUE
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "postgres.resourceName" (dict "root" . "component" "patroni") }}
+                  key: KUBERNETES_STANDBY_LEADER_LABEL_VALUE
+
+            - name: KUBERNETES_LABELS
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "postgres.resourceName" (dict "root" . "component" "patroni") }}
+                  key: KUBERNETES_LABELS
+
+            - name: SPILO_CONFIGURATION
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "postgres.resourceName" (dict "root" . "component" "patroni") }}
+                  key: SPILO_CONFIGURATION
+
+          volumeMounts:
+            - name: {{ include "postgres.resourceName" (dict "root" . "component" "data") }}
+              mountPath: /home/postgres/pgdata
+
+  volumeClaimTemplates:
+    - metadata:
+        name: {{ include "postgres.resourceName" (dict "root" . "component" "data") }}
+
+      spec:
+        {{- with .Values.storage.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        accessModes:
+          - ReadWriteOnce
+
+        resources:
+          requests:
+            storage: {{ .Values.storage.size }}

@@ -1,0 +1,119 @@
+---
+- name: Ensure base directories exist
+  file:
+      path: "{{ item }}"
+      state: directory
+  loop:
+      - "{{ java_home }}"
+      - "{{ kafka_dir }}"
+      - "{{ kafka_data_dir }}"
+
+- name: Download and Extract Java 17
+  unarchive:
+      src: "{{ java_url }}"
+      dest: "{{ java_home }}"
+      remote_src: yes
+      extra_opts: [--strip-components=1]
+      creates: "{{ java_home }}/bin/java"
+
+- name: Download and Extract Apache Kafka
+  unarchive:
+      src: "{{ kafka_url }}"
+      dest: "{{ kafka_dir }}"
+      remote_src: yes
+      extra_opts: [--strip-components=1]
+      creates: "{{ kafka_dir }}/bin/kafka-server-start.sh"
+
+- name: Template server.properties
+  template:
+      src: server.properties.j2
+      dest: "{{ kafka_dir }}/config/kraft/server.properties"
+  notify: Restart Kafka
+
+- name: Create Kafka monitoring directory
+  file:
+      path: "{{ kafka_jmx_exporter_dir }}"
+      state: directory
+      mode: "0755"
+
+- name: Create JMX artifact cache on the Ansible controller
+  file:
+      path: "{{ kafka_jmx_exporter_cache_dir }}"
+      state: directory
+      mode: "0755"
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Download Prometheus JMX Java agent on the Ansible controller
+  get_url:
+      url: "{{ kafka_jmx_exporter_url }}"
+      dest: "{{ kafka_jmx_exporter_cache_dir }}/jmx_prometheus_javaagent-{{ kafka_jmx_exporter_version }}.jar"
+      checksum: "{{ kafka_jmx_exporter_checksum }}"
+      mode: "0644"
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Copy Prometheus JMX Java agent to Kafka servers
+  copy:
+      src: "{{ kafka_jmx_exporter_cache_dir }}/jmx_prometheus_javaagent-{{ kafka_jmx_exporter_version }}.jar"
+      dest: "{{ kafka_jmx_exporter_jar }}"
+      mode: "0644"
+  notify: Restart Kafka
+
+- name: Configure Kafka metrics for Prometheus
+  copy:
+      src: jmx-exporter.yml
+      dest: "{{ kafka_jmx_exporter_dir }}/jmx-exporter.yml"
+      mode: "0644"
+  notify: Restart Kafka
+
+- name: Check if Kafka storage is already formatted
+  stat:
+      path: "{{ kafka_data_dir }}/meta.properties"
+  register: kafka_meta
+
+- name: Format Kafka Storage (KRaft)
+  shell: >
+      {{ kafka_dir }}/bin/kafka-storage.sh format
+      -t {{ cluster_id }}
+      -c {{ kafka_dir }}/config/kraft/server.properties
+  environment:
+      JAVA_HOME: "{{ java_home }}"
+  when: not kafka_meta.stat.exists
+
+- name: Create Systemd Service for Kafka
+  copy:
+      dest: /etc/systemd/system/kafka.service
+      content: |
+          [Unit]
+          Description=Apache Kafka (KRaft)
+          Requires=network.target
+          After=network.target
+
+          [Service]
+          Type=simple
+          Environment="JAVA_HOME={{ java_home }}"
+          Environment="KAFKA_OPTS=-javaagent:{{ kafka_jmx_exporter_jar }}={{ kafka_jmx_exporter_host }}:{{ kafka_jmx_exporter_port }}:{{ kafka_jmx_exporter_dir }}/jmx-exporter.yml"
+          ExecStart={{ kafka_dir }}/bin/kafka-server-start.sh {{ kafka_dir }}/config/kraft/server.properties
+          ExecStop={{ kafka_dir }}/bin/kafka-server-stop.sh
+          Restart=on-failure
+
+          [Install]
+          WantedBy=multi-user.target
+  notify: Restart Kafka
+
+- name: Start and Enable Kafka Service
+  systemd:
+      name: kafka
+      state: started
+      enabled: yes
+      daemon_reload: yes
+
+- name: Add Kafka bin directory to system-wide PATH
+  copy:
+      dest: /etc/profile.d/kafka.sh
+      content: |
+          export PATH=$PATH:{{ kafka_dir }}/bin
+      mode: "0644"

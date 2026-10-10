@@ -1,0 +1,20 @@
+
+[Unit]
+Description=Apache StarRocks BE
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ starrocks_user }}
+Group={{ starrocks_user }}
+Environment="JAVA_HOME={{ starrocks_java_home }}"
+Environment="PATH={{ starrocks_java_home }}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="GLOG_log_dir={{ starrocks_be_log_dir }}"
+Environment="GOOGLE_LOG_DIR={{ starrocks_be_log_dir }}"
+ExecStart={{ starrocks_be_home }}/bin/start_be.sh
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

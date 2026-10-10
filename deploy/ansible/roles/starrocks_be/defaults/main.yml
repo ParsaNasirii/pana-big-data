@@ -1,0 +1,16 @@
+---
+starrocks_be_home: "{{ starrocks_install_base }}/be"
+starrocks_be_storage_root: "{{ starrocks_be_home }}/storage"
+starrocks_be_log_dir: "{{ starrocks_be_home }}/log"
+
+starrocks_be_port: 9060
+starrocks_be_http_port: 8040
+starrocks_be_heartbeat_port: 9050
+starrocks_be_brpc_port: 8060
+starrocks_be_starlet_port: 9070
+
+starrocks_be_mem_limit: "25%"
+starrocks_be_datacache_mem_size: "128M"
+starrocks_be_enable_datacache_mem_auto_adjust: false
+
+starrocks_be_http_wait_timeout: 300

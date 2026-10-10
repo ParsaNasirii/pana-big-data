@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "postgres.resourceName" (dict "root" . "component" "patroni") }}
+data:
+  database: {{ .Values.postgres.database | quote }}
+  SCOPE: {{ .Values.patroni.scope | quote }}
+  PGROOT: "/home/postgres/pgdata/pgroot"
+  DCS_ENABLE_KUBERNETES_API: "true"
+  KUBERNETES_USE_CONFIGMAPS: "true"
+  KUBERNETES_SCOPE_LABEL: {{ .Values.patroni.scopeLabel | quote }}
+  KUBERNETES_ROLE_LABEL: {{ .Values.patroni.roleLabel | quote }}
+  KUBERNETES_LEADER_LABEL_VALUE: {{ .Values.patroni.leaderLabelValue | quote }}
+  KUBERNETES_STANDBY_LEADER_LABEL_VALUE: {{ .Values.patroni.leaderLabelValue | quote }}
+  KUBERNETES_LABELS: {{ printf "{\"app\":\"%s\"}" (include "postgres.name" .) | quote }}
+  SPILO_CONFIGURATION: |
+    postgresql:
+      parameters:
+        max_wal_size: {{ .Values.patroni.maxWalSize | quote }}
+        checkpoint_timeout: {{ .Values.patroni.checkpointTimeout | quote }}
+      recovery_conf:
+        # Replay WAL cached by Spilo's basebackup_fast_xlog when creating a replica.
+        restore_command: >-
+          test -f "/home/postgres/pgdata/pgroot/wal_fast/%f" &&
+          /scripts/restore_command.sh "%f" "%p"
+    bootstrap:
+      dcs:
+        postgresql:
+          parameters:
+            max_slot_wal_keep_size: {{ .Values.patroni.maxSlotWalKeepSize | quote }}
+            max_wal_size: {{ .Values.patroni.maxWalSize | quote }}
+            checkpoint_timeout: {{ .Values.patroni.checkpointTimeout | quote }}
+  {{- if .Values.databaseInit.enabled }}
+  postgres-tables.sql: |-
+{{ .Files.Get "files/postgres-tables.sql" | indent 4 }}
+  {{- end }}

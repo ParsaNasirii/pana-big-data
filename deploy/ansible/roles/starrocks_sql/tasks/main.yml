@@ -1,0 +1,6 @@
+---
+- name: Initialize database and schema
+  ansible.builtin.include_tasks: init.yml
+
+- name: Verify cluster health
+  ansible.builtin.include_tasks: verify.yml

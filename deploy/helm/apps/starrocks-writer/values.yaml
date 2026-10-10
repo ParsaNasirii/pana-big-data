@@ -1,0 +1,60 @@
+replicaCount: 3
+
+image:
+  repository: ghcr.io/your-github-user/pana-big-data/starrocks-writer
+  pullPolicy: Always
+  tag: ""
+
+metrics:
+  port: 8380
+
+env:
+  JAVA_TOOL_OPTIONS: "-Xms128m -Xmx768m -XX:+ExitOnOutOfMemoryError"
+
+credentials:
+  # Secret keys: STARROCKS_USERNAME and STARROCKS_PASSWORD.
+  existingSecret: ""
+
+config:
+  kafka:
+    kafka.topic: "multi-version-netflow"
+    bootstrap.servers: "192.0.2.11:9092,192.0.2.12:9092,192.0.2.13:9092,192.0.2.14:9092"
+    group.id: "netflow-starrocks-writer"
+    auto.offset.reset: "earliest"
+    enable.auto.commit: "false"
+    max.poll.records: "100000"
+    max.partition.fetch.bytes: "67108864"
+    fetch.min.bytes: "5242880"
+    fetch.max.wait.ms: "500"
+    receive.buffer.bytes: "10485760"
+    send.buffer.bytes: "10485760"
+    max.poll.interval.ms: "1800000"
+    key.deserializer: "org.apache.kafka.common.serialization.ByteArrayDeserializer"
+    value.deserializer: "io.confluent.kafka.serializers.KafkaAvroDeserializer"
+    schema.registry.url: "http://schema-registry:8081"
+    specific.avro.reader: "false"
+    key.serializer: "org.apache.kafka.common.serialization.ByteArraySerializer"
+    value.serializer: "io.confluent.kafka.serializers.KafkaAvroSerializer"
+    acks: "all"
+    linger.ms: "10"
+    batch.size: "131072"
+    consumer.max.invalid.batch.size: "5000000"
+    consumer.retry.backoff.ms: "1000"
+    consumer.poll.timeout.ms: "10000"
+    buffer.flush.interval.ms: "100"
+  starrocks:
+    starrocks.fe.hosts: "192.0.2.14,192.0.2.12,192.0.2.13,192.0.2.11"
+    starrocks.http.port: "8030"
+    starrocks.database: "panabigdata"
+    starrocks.table: "netflow_raw"
+    starrocks.batch.max.records: "100000"
+    starrocks.connect.timeout.ms: "3000"
+    starrocks.request.timeout.ms: "60000"
+
+terminationGracePeriodSeconds: 270
+
+resources:
+  requests:
+    memory: 1Gi
+  limits:
+    memory: 1536Mi

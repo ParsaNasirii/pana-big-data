@@ -1,0 +1,33 @@
+# Build outputs and editor files
+**/target/
+**/effective-pom.xml
+.idea/
+.vscode/
+*.iml
+.DS_Store
+**/.venv/
+**/__pycache__/
+*.log
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.jks
+.kube/
+**/vault.yml
+**/vault.yaml
+**/.vault_pass*
+**/*vault-password*
+*.local.yml
+*.local.yaml
+*.local.properties
+
+# Downloaded dependencies and local state
+deploy/ansible/collections/
+**/charts/*.tgz
+.agent/
+.opencode/

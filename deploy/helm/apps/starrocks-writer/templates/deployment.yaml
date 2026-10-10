@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "starrocks-writer.fullname" . }}
+  labels:
+    {{- include "starrocks-writer.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "starrocks-writer.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: {{ .Values.metrics.port | quote }}
+      labels:
+        {{- include "starrocks-writer.selectorLabels" . | nindent 8 }}
+    spec:
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/instance: {{ .Release.Name }}
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: {{ include "starrocks-writer.name" . }}
+          image: "{{ .Values.image.repository }}:{{ required "image.tag is required" .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          env:
+            - name: STARROCKS_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "credentials.existingSecret is required" .Values.credentials.existingSecret | quote }}
+                  key: STARROCKS_USERNAME
+            - name: STARROCKS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "credentials.existingSecret is required" .Values.credentials.existingSecret | quote }}
+                  key: STARROCKS_PASSWORD
+          envFrom:
+            - configMapRef:
+                name: {{ include "starrocks-writer.fullname" . }}-config
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "starrocks-writer.fullname" . }}-config
+            items:
+              - key: application.properties
+                path: application.properties

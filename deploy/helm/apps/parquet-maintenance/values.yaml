@@ -1,0 +1,52 @@
+image:
+  repository: ghcr.io/your-github-user/pana-big-data/parquet-maintenance
+  tag: "0.0.1-SNAPSHOT"
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+schedule: "0 3 * * *"
+successfulJobsHistoryLimit: 3
+failedJobsHistoryLimit: 3
+
+backoffLimit: 0
+activeDeadlineSeconds: 21600
+terminationGracePeriodSeconds: 120
+
+spark:
+  master: "spark://spark-master:7077"
+  driverMemory: "2g"
+  executorMemory: "2g"
+  executorCores: 2
+  totalExecutorCores: 4
+  driverPort: 7078
+  blockManagerPort: 7079
+  eventLogDir: hdfs://netflow/spark-event-logs
+  # Cluster must run Spark 4.1.1 / Scala 2.13 / Java 17.
+
+hdfs:
+  configMapName: hdfs-client-config
+  configDirectory: /etc/hadoop/conf
+
+compaction:
+  basePath: /netflow
+  dryRun: false
+  targetFileSizeMiB: 2048
+
+cleanup:
+  tempMaxAgeHours: 168
+  lockMaxAgeHours: 24
+
+parquet:
+  timeZone: Asia/Tehran
+  compressionCodec: ZSTD
+  zstdCompressionLevel: 1
+
+resources:
+  requests:
+    cpu: "1"
+    memory: 3Gi
+  limits:
+    cpu: "2"
+    memory: 4Gi
+nodeSelector: {}
+tolerations: []

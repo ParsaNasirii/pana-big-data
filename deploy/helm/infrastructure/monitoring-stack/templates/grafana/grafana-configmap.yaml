@@ -1,0 +1,64 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "monitoring-stack.resourceName" (dict "root" . "component" "grafana-config") }}
+data:
+{{- range $path, $_ := .Files.Glob "dashboards/Infra/*.json" }}
+  {{ base $path }}: |
+{{ $.Files.Get $path | mustFromJson | mustToJson | indent 4 }}
+{{- end }}
+{{- range $path, $_ := .Files.Glob "dashboards/Apps/*.json" }}
+  {{ base $path }}: |
+{{ $.Files.Get $path | mustFromJson | mustToJson | indent 4 }}
+{{- end }}
+{{- range $path, $_ := .Files.Glob "dashboards/*.json" }}
+  {{ base $path }}: |
+{{ $.Files.Get $path | mustFromJson | mustToJson | indent 4 }}
+{{- end }}
+  dashboards.yml: |
+    apiVersion: 1
+    providers:
+      - name: default
+        orgId: 1
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 30
+        allowUiUpdates: true
+        options:
+          path: /var/lib/grafana/dashboards
+          foldersFromFilesStructure: true
+  prometheus.yml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://{{ include "monitoring-stack.resourceName" (dict "root" . "component" "prometheus") }}:9090
+        isDefault: true
+        uid: prometheus
+
+      - name: Starrocks
+        type: mysql
+        access: proxy
+        url: {{ .Values.grafana.datasources.starrocks.host | quote }}
+        user: $STARROCKS_USERNAME
+        isDefault: false
+        uid: starrocks
+        jsonData:
+          database: {{ .Values.grafana.datasources.starrocks.database | quote }}
+        secureJsonData:
+          password: $STARROCKS_PASSWORD
+
+      - name: Cubes
+        type: postgres
+        access: proxy
+        url: {{ .Values.grafana.datasources.postgres.host | quote }}
+        user: $POSTGRES_USERNAME
+        isDefault: false
+        uid: cubes
+        jsonData:
+          database: {{ .Values.grafana.datasources.postgres.database | quote }}
+          sslmode: {{ .Values.grafana.datasources.postgres.sslmode | quote }}
+          tlsConfigurationMethod: file-path
+        secureJsonData:
+          password: $POSTGRES_PASSWORD

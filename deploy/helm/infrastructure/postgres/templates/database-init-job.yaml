@@ -1,0 +1,74 @@
+{{- if .Values.databaseInit.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "postgres.resourceName" (dict "root" . "component" "database-init") }}
+  annotations:
+    "helm.sh/hook": post-install
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: {{ .Values.databaseInit.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "postgres.resourceName" (dict "root" . "component" "database-init") }}
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      containers:
+        - name: database-init
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /bin/bash
+            - -ec
+          args:
+            - |-
+              PG_BIN="$(pg_config --bindir)"
+
+              until "$PG_BIN/pg_isready" --host={{ include "postgres.name" . }} --port=5432 --username="$POSTGRES_USER" --dbname=postgres; do
+                sleep 2
+              done
+
+              "$PG_BIN/psql" --host={{ include "postgres.name" . }} --port=5432 --username="$POSTGRES_USER" --dbname=postgres --set=ON_ERROR_STOP=1 --set=db="$POSTGRES_DB" --set=owner="$POSTGRES_USER" <<'SQL'
+              SELECT format('CREATE DATABASE %I OWNER %I', :'db', :'owner')
+              WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = :'db')
+              \gexec
+              SQL
+
+              "$PG_BIN/psql" --host={{ include "postgres.name" . }} --port=5432 --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --set=ON_ERROR_STOP=1 --single-transaction --file=/schema/postgres-tables.sql
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "postgres.existingSecret is required" .Values.postgres.existingSecret | quote }}
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "postgres.existingSecret is required" .Values.postgres.existingSecret | quote }}
+                  key: password
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "postgres.existingSecret is required" .Values.postgres.existingSecret | quote }}
+                  key: password
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "postgres.resourceName" (dict "root" . "component" "patroni") }}
+                  key: database
+          volumeMounts:
+            - name: schema
+              mountPath: /schema
+              readOnly: true
+      volumes:
+        - name: schema
+          configMap:
+            name: {{ include "postgres.resourceName" (dict "root" . "component" "patroni") }}
+            items:
+              - key: postgres-tables.sql
+                path: postgres-tables.sql
+{{- end }}

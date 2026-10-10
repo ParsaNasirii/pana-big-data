@@ -1,0 +1,51 @@
+replicaCount: 3
+
+image:
+  repository: ghcr.io/your-github-user/pana-big-data/parquet-writer
+  pullPolicy: Always
+  tag: "latest"
+
+metrics:
+  port: 8380
+
+config:
+  application:
+    parquet.compression.codec: "ZSTD"
+    parquet.compression.codec.zstd.level: "1"
+    parquet.base.path: "/netflow/"
+    parquet.target.file.size.mib: "2048"
+    parquet.rotation.interval.ms: "3600000"
+    parquet.time.zone: "Asia/Tehran"
+  kafka:
+    kafka.topic: "multi-version-netflow"
+    bootstrap.servers: "192.0.2.11:9092,192.0.2.12:9092,192.0.2.13:9092,192.0.2.14:9092"
+    group.id: "netflow-hdfs-parquet-writer"
+    auto.offset.reset: "earliest"
+    enable.auto.commit: "false"
+    max.poll.records: "100000"
+    max.partition.fetch.bytes: "52428800"
+    max.poll.interval.ms: "900000"
+    key.deserializer: "org.apache.kafka.common.serialization.ByteArrayDeserializer"
+    value.deserializer: "io.confluent.kafka.serializers.KafkaAvroDeserializer"
+    schema.registry.url: "http://schema-registry:8081"
+    specific.avro.reader: "false"
+    key.serializer: "org.apache.kafka.common.serialization.ByteArraySerializer"
+    value.serializer: "io.confluent.kafka.serializers.KafkaAvroSerializer"
+    acks: "all"
+    linger.ms: "5"
+    batch.size: "65536"
+    dlq.kafka.topic: "netflow-invalid"
+    consumer.retry.backoff.ms: "1000"
+    consumer.poll.timeout.ms: "10000"
+    buffer.flush.interval.ms: "60000"
+
+env:
+  KAFKA_BOOTSTRAP_SERVERS: "192.0.2.11:9092,192.0.2.12:9092,192.0.2.13:9092,192.0.2.14:9092"
+
+resources: {}
+
+terminationGracePeriodSeconds: 90
+
+# Shared infrastructure ConfigMap in this namespace.
+hdfs:
+  configMapName: hdfs-client-config

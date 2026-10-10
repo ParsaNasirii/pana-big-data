@@ -1,0 +1,25 @@
+{{- if .Values.master.uiService.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "spark-cluster.resourceName" (dict "root" . "component" "master-ui") }}
+  labels:
+    app: {{ include "spark-cluster.name" . }}
+    component: master-ui
+
+spec:
+  type: {{ .Values.master.uiService.type }}
+
+  {{- if .Values.master.uiService.loadBalancerIP }}
+  loadBalancerIP: {{ .Values.master.uiService.loadBalancerIP }}
+  {{- end }}
+
+  selector:
+    app: {{ include "spark-cluster.name" . }}
+    component: master
+
+  ports:
+    - name: webui
+      port: {{ .Values.master.uiService.port }}
+      targetPort: {{ .Values.master.uiService.targetPort }}
+{{- end }}

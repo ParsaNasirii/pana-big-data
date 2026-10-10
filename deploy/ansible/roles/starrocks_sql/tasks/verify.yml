@@ -1,0 +1,120 @@
+---
+- name: Wait for leader FE query port {{ starrocks_fe_query_port }}
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ starrocks_fe_query_port }}"
+    timeout: "{{ starrocks_fe_http_wait_timeout }}"
+  when: not ansible_check_mode
+
+- name: Verify basic SQL connectivity (SELECT 1)
+  community.mysql.mysql_query:
+    login_user: root
+    login_password: "{{ starrocks_root_password }}"
+    login_host: "{{ hostvars[inventory_hostname]['ansible_host'] }}"
+    login_port: "{{ starrocks_fe_query_port }}"
+    query: "SELECT 1"
+  delegate_to: localhost
+  changed_when: false
+
+- name: Wait for all inventory FEs to be registered and alive
+  community.mysql.mysql_query:
+    login_user: root
+    login_password: "{{ starrocks_root_password }}"
+    login_host: "{{ hostvars[inventory_hostname]['ansible_host'] }}"
+    login_port: "{{ starrocks_fe_query_port }}"
+    query: "SHOW FRONTENDS"
+  delegate_to: localhost
+  register: starrocks_verify_frontends
+  changed_when: false
+  until: >-
+    hostvars[item]['ansible_host'] in
+    (starrocks_verify_frontends.query_result[0]
+     | selectattr('Alive', 'equalto', 'true') | map(attribute='IP') | list)
+  retries: 30
+  delay: 2
+  loop: "{{ groups['starrocks_fe'] }}"
+  when: not ansible_check_mode
+
+- name: Wait for all inventory BEs to be registered and alive
+  community.mysql.mysql_query:
+    login_user: root
+    login_password: "{{ starrocks_root_password }}"
+    login_host: "{{ hostvars[inventory_hostname]['ansible_host'] }}"
+    login_port: "{{ starrocks_fe_query_port }}"
+    query: "SHOW BACKENDS"
+  delegate_to: localhost
+  register: starrocks_verify_backends
+  changed_when: false
+  until: >-
+    hostvars[item]['ansible_host'] in
+    (starrocks_verify_backends.query_result[0]
+     | selectattr('Alive', 'equalto', 'true') | map(attribute='IP') | list)
+  retries: 30
+  delay: 2
+  loop: "{{ groups['starrocks_be'] }}"
+  when: not ansible_check_mode
+
+- name: Query available databases (SHOW DATABASES)
+  community.mysql.mysql_query:
+    login_user: root
+    login_password: "{{ starrocks_root_password }}"
+    login_host: "{{ hostvars[inventory_hostname]['ansible_host'] }}"
+    login_port: "{{ starrocks_fe_query_port }}"
+    query: "SHOW DATABASES"
+  delegate_to: localhost
+  register: starrocks_verify_databases
+  changed_when: false
+
+- name: Verify {{ starrocks_database }} database exists
+  ansible.builtin.assert:
+    that:
+      - starrocks_database in (starrocks_verify_databases.query_result[0] | map(attribute='Database') | list)
+    fail_msg: >-
+      Database check failed: '{{ starrocks_database }}' is not present in
+      SHOW DATABASES. Unhealthy component: SQL initialization (database).
+  when: not ansible_check_mode
+
+- name: Query tables in {{ starrocks_database }} (SHOW TABLES)
+  community.mysql.mysql_query:
+    login_user: root
+    login_password: "{{ starrocks_root_password }}"
+    login_host: "{{ hostvars[inventory_hostname]['ansible_host'] }}"
+    login_port: "{{ starrocks_fe_query_port }}"
+    login_db: "{{ starrocks_database }}"
+    query: "SHOW TABLES"
+  delegate_to: localhost
+  register: starrocks_verify_tables
+  changed_when: false
+
+- name: Verify {{ starrocks_table }} table exists
+  ansible.builtin.assert:
+    that:
+      - starrocks_table in (starrocks_verify_tables.query_result[0] | map(attribute='Tables_in_' ~ starrocks_database) | list)
+    fail_msg: >-
+      Table check failed: '{{ starrocks_table }}' is not present in
+      database '{{ starrocks_database }}'. Unhealthy component:
+      SQL initialization (table).
+  when: not ansible_check_mode
+
+- name: Read columns of {{ starrocks_table }}
+  community.mysql.mysql_query:
+    login_user: root
+    login_password: "{{ starrocks_root_password }}"
+    login_host: "{{ hostvars[inventory_hostname]['ansible_host'] }}"
+    login_port: "{{ starrocks_fe_query_port }}"
+    login_db: "{{ starrocks_database }}"
+    query: "DESC {{ starrocks_table }}"
+  delegate_to: localhost
+  register: starrocks_verify_columns
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Verify the day column required by Spring queries exists
+  ansible.builtin.assert:
+    that:
+      - "'KAFKA_DAY' in (starrocks_verify_columns.query_result[0] | map(attribute='Field') | list)"
+    fail_msg: >-
+      {{ starrocks_database }}.{{ starrocks_table }} still needs a schema migration.
+      CREATE TABLE IF NOT EXISTS does not update existing tables. Preserve the
+      existing data and migrate to the KAFKA_DAY schema before deploying Spring.
+  when: not ansible_check_mode

@@ -1,0 +1,56 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "starrocks-backfill.fullname" . }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 2700
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      containers:
+        - name: backfill
+          image: "{{ .Values.image.repository }}:{{ required "image.tag is required" .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: HADOOP_USER_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.hdfsConfigMap | quote }}
+                  key: HADOOP_USER_NAME
+            - name: STARROCKS_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "credentials.existingSecret is required" .Values.credentials.existingSecret | quote }}
+                  key: STARROCKS_USERNAME
+            - name: STARROCKS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "credentials.existingSecret is required" .Values.credentials.existingSecret | quote }}
+                  key: STARROCKS_PASSWORD
+          volumeMounts:
+            - name: backfill-config
+              mountPath: /app/config
+              readOnly: true
+            - name: hadoop-conf
+              mountPath: /etc/hadoop/conf
+              readOnly: true
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: backfill-config
+          configMap:
+            name: {{ include "starrocks-backfill.configName" . }}
+        - name: hadoop-conf
+          configMap:
+            name: {{ .Values.hdfsConfigMap | quote }}
+            items:
+              - key: core-site.xml
+                path: core-site.xml
+              - key: hdfs-site.xml
+                path: hdfs-site.xml

@@ -1,0 +1,53 @@
+replicaCount: 1
+
+config:
+  spring.application.name: "api-service"
+  spring.datasource.starrocks.configuration.connection-init-sql: "SET time_zone = 'Asia/Tehran'"
+  spring.jackson.time-zone: "Asia/Tehran"
+  spring.jackson.serialization.write-dates-with-context-time-zone: "true"
+  server.port: "8080"
+  server.error.include-exception: "false"
+  server.error.include-message: "never"
+  server.error.include-stacktrace: "never"
+  server.error.include-binding-errors: "never"
+
+# Database credentials are supplied from this pre-existing Secret.
+existingSecret: ""
+
+env:
+  SPRING_PROFILES_ACTIVE: "prod"
+  SPRING_DATASOURCE_POSTGRES_URL: "jdbc:postgresql://postgres:5432/netflow_cube_db"
+  SPRING_DATASOURCE_STARROCKS_URL: "jdbc:mysql://192.0.2.14:9030/panabigdata"
+
+image:
+  repository: ghcr.io/your-github-user/pana-big-data/api-service
+  pullPolicy: Always
+  tag: "latest"
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+
+service:
+  type: LoadBalancer
+  port: 8080
+  targetPort: 8080
+
+livenessProbe:
+  httpGet:
+    path: /actuator/health/liveness
+    port: http
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /actuator/health/readiness
+    port: http
+  initialDelaySeconds: 20
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3

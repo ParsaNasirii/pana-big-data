@@ -1,0 +1,3 @@
+---
+starrocks_arch: amd64
+starrocks_artifact_filename: "StarRocks-{{ starrocks_version }}-{{ starrocks_os }}-{{ starrocks_arch }}.tar.gz"

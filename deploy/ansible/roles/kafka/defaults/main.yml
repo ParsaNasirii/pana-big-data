@@ -1,0 +1,10 @@
+---
+kafka_jmx_exporter_version: "0.17.2"
+kafka_jmx_exporter_url: "https://repo.maven.apache.org/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/{{ kafka_jmx_exporter_version }}/jmx_prometheus_javaagent-{{ kafka_jmx_exporter_version }}.jar"
+kafka_jmx_exporter_checksum: "sha256:1279040261ee47b834bd21488f42e6dc765d4bd95442a66f586bec238a081293"
+# Cache the JMX exporter on the Ansible controller before copying it to servers.
+kafka_jmx_exporter_cache_dir: "{{ lookup('env', 'HOME') }}/.cache/panabigdata/kafka"
+kafka_jmx_exporter_dir: "{{ kafka_dir }}/monitoring"
+kafka_jmx_exporter_jar: "{{ kafka_jmx_exporter_dir }}/jmx_prometheus_javaagent-{{ kafka_jmx_exporter_version }}.jar"
+kafka_jmx_exporter_host: "{{ ansible_host }}"
+kafka_jmx_exporter_port: 7071

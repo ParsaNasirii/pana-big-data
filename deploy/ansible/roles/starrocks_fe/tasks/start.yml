@@ -1,0 +1,48 @@
+---
+- name: Start starrocks-fe service
+  ansible.builtin.systemd:
+    name: starrocks-fe
+    state: started
+
+- name: Wait for FE HTTP port {{ starrocks_fe_http_port }}
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ starrocks_fe_http_port }}"
+    timeout: "{{ starrocks_fe_http_wait_timeout }}"
+  when: not ansible_check_mode
+
+- name: Probe whether this FE root still has no password
+  community.mysql.mysql_query:
+    login_user: root
+    login_host: "{{ hostvars[inventory_hostname]['ansible_host'] }}"
+    login_port: "{{ starrocks_fe_query_port }}"
+    query: "SELECT 1"
+  delegate_to: localhost
+  register: starrocks_started_fe_no_password
+  until: >-
+    starrocks_started_fe_no_password.query_result is defined or
+    'Access denied' in (starrocks_started_fe_no_password.msg | default(''))
+  retries: 60
+  delay: 5
+  failed_when: false
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Wait for this FE to be alive and joined before proceeding
+  community.mysql.mysql_query:
+    login_user: root
+    login_password: "{{ starrocks_root_password if starrocks_started_fe_no_password.query_result is not defined else omit }}"
+    login_host: "{{ hostvars[inventory_hostname]['ansible_host'] }}"
+    login_port: "{{ starrocks_fe_query_port }}"
+    query: "SHOW FRONTENDS"
+  delegate_to: localhost
+  register: starrocks_started_frontends
+  until: >-
+    ((starrocks_started_frontends.query_result | default([[]]))[0]
+    | selectattr('IP', 'equalto', hostvars[inventory_hostname]['ansible_host'])
+    | selectattr('Alive', 'equalto', 'true')
+    | selectattr('Join', 'equalto', 'true') | list | length) == 1
+  retries: 60
+  delay: 5
+  changed_when: false
+  when: not ansible_check_mode

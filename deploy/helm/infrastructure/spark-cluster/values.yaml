@@ -1,0 +1,35 @@
+image:
+  repository: apache/spark
+  tag: "4.1.1"
+  pullPolicy: IfNotPresent
+
+master:
+  replicas: 1
+  port: 7077
+  webuiPort: 8080
+
+  uiService:
+    enabled: true
+    type: LoadBalancer
+    port: 8080
+    targetPort: 8080
+
+worker:
+  port: 7078
+  webuiPort: 8081
+  cores: 2
+  memory: 2G
+
+history:
+  enabled: true
+  webuiPort: 18080
+  cleaner:
+    enabled: true
+    maxAge: 10d
+  uiService:
+    type: LoadBalancer
+    port: 18080
+  eventLogs:
+    directory: hdfs://netflow/spark-event-logs
+    hdfsConfigMapName: hdfs-client-config
+    hadoopConfigDirectory: /etc/hadoop/conf

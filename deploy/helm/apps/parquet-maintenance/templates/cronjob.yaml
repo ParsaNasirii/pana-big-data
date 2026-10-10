@@ -1,0 +1,92 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "parquet-maintenance.fullname" . }}
+spec:
+  schedule: {{ .Values.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: {{ .Values.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.backoffLimit }}
+      activeDeadlineSeconds: {{ .Values.activeDeadlineSeconds }}
+      template:
+        metadata:
+          annotations:
+            checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+          labels:
+            {{- include "parquet-maintenance.selector" . | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets: {{ toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.nodeSelector }}
+          nodeSelector: {{ toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations: {{ toYaml . | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: compactor
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["java"]
+              args:
+                - "-Xmx{{ .Values.spark.driverMemory }}"
+                - -cp
+                - "/app/resources:/app/classes:/app/libs/*:/opt/spark/jars/*"
+                - io.github.panabigdata.maintenance.Main
+              env:
+                - name: SPARK_MASTER
+                  value: {{ .Values.spark.master | quote }}
+                - name: SPARK_DRIVER_HOST
+                  value: "{{ include "parquet-maintenance.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local"
+                - name: SPARK_DRIVER_PORT
+                  value: {{ .Values.spark.driverPort | quote }}
+                - name: SPARK_DRIVER_BLOCK_MANAGER_PORT
+                  value: {{ .Values.spark.blockManagerPort | quote }}
+                - name: SPARK_EXECUTOR_MEMORY
+                  value: {{ .Values.spark.executorMemory | quote }}
+                - name: SPARK_EXECUTOR_CORES
+                  value: {{ .Values.spark.executorCores | quote }}
+                - name: SPARK_TOTAL_EXECUTOR_CORES
+                  value: {{ .Values.spark.totalExecutorCores | quote }}
+                - name: HADOOP_CONF_DIR
+                  value: {{ .Values.hdfs.configDirectory | quote }}
+                - name: HADOOP_USER_NAME
+                  valueFrom:
+                    configMapKeyRef:
+                      name: {{ .Values.hdfs.configMapName }}
+                      key: HADOOP_USER_NAME
+              ports:
+                - name: driver-rpc
+                  containerPort: {{ .Values.spark.driverPort }}
+                - name: block-manager
+                  containerPort: {{ .Values.spark.blockManagerPort }}
+              resources: {{ toYaml .Values.resources | nindent 16 }}
+              volumeMounts:
+                - name: app-config
+                  mountPath: /app/config
+                  readOnly: true
+                - name: hadoop-conf
+                  mountPath: {{ .Values.hdfs.configDirectory | quote }}
+                  readOnly: true
+          volumes:
+            - name: app-config
+              configMap:
+                name: {{ include "parquet-maintenance.fullname" . }}-config
+                items:
+                  - key: application.properties
+                    path: application.properties
+            - name: hadoop-conf
+              configMap:
+                name: {{ .Values.hdfs.configMapName }}
+                items:
+                  - key: core-site.xml
+                    path: core-site.xml
+                  - key: hdfs-site.xml
+                    path: hdfs-site.xml

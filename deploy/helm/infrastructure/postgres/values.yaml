@@ -1,0 +1,46 @@
+replicaCount: 3
+
+resources:
+  requests:
+    memory: 2Gi
+  limits:
+    memory: 4Gi
+
+image:
+  repository: ghcr.io/zalando/spilo-17
+  tag: "4.0-p2"
+  pullPolicy: IfNotPresent
+
+postgres:
+  database: netflow_cube_db
+  # Secret keys: username, password, and replication-password.
+  existingSecret: ""
+
+storage:
+  size: 1Gi
+  storageClass: ""
+
+service:
+  port: 5432
+
+patroni:
+  scope: postgres
+  scopeLabel: cluster-name
+  roleLabel: spilo-role
+  leaderLabelValue: primary
+  maxSlotWalKeepSize: 10GB
+  # Bulk cube upserts otherwise reach the default 1GB WAL threshold every minute.
+  maxWalSize: 8GB
+  checkpointTimeout: 15min
+
+externalService:
+  enabled: true
+  type: LoadBalancer
+  port: 5432
+  selector:
+    app: postgres
+    spilo-role: primary
+
+databaseInit:
+  enabled: true
+  activeDeadlineSeconds: 300

@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "hdfs-client.configMapName" . }}
+data:
+  HADOOP_USER_NAME: {{ .Values.user | quote }}
+  core-site.xml: |
+{{ .Files.Get "files/core-site.xml" | indent 4 }}
+  hdfs-site.xml: |
+{{ .Files.Get "files/hdfs-site.xml" | indent 4 }}

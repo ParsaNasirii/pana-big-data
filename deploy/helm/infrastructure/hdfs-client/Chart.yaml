@@ -1,0 +1,5 @@
+apiVersion: v2
+name: hdfs-client
+description: Shared HDFS client configuration for Pana Big Data applications
+type: application
+version: 0.1.0

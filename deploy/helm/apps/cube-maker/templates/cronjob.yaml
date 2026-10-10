@@ -1,0 +1,72 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "cube-maker.fullname" . }}
+  labels:
+    {{- include "cube-maker.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.schedule | quote }}
+  {{- with .Values.timeZone }}
+  timeZone: {{ . | quote }}
+  {{- end }}
+  concurrencyPolicy: {{ .Values.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ .Values.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.failedJobsHistoryLimit }}
+  jobTemplate:
+    metadata:
+      labels:
+        {{- include "cube-maker.selectorLabels" . | nindent 8 }}
+    spec:
+      backoffLimit: {{ .Values.backoffLimit }}
+      template:
+        metadata:
+          annotations:
+            prometheus.io/scrape: "true"
+            prometheus.io/path: "/metrics"
+            prometheus.io/port: {{ .Values.metrics.port | quote }}
+            checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+          labels:
+            {{- include "cube-maker.selectorLabels" . | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsUser: 0
+          automountServiceAccountToken: false
+          terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+          containers:
+            - name: {{ include "cube-maker.name" . }}
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              ports:
+                - name: metrics
+                  containerPort: {{ .Values.metrics.port }}
+                  protocol: TCP
+                - name: driver-rpc
+                  containerPort: {{ .Values.driver.port }}
+                - name: block-manager
+                  containerPort: {{ .Values.driver.blockManagerPort }}
+              env:
+                - name: POSTGRES_USERNAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ required "existingSecret is required" .Values.existingSecret | quote }}
+                      key: POSTGRES_USERNAME
+                - name: POSTGRES_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ required "existingSecret is required" .Values.existingSecret | quote }}
+                      key: POSTGRES_PASSWORD
+              envFrom:
+                - configMapRef:
+                    name: {{ include "cube-maker.fullname" . }}-config
+              volumeMounts:
+                - name: config
+                  mountPath: /app/config
+                  readOnly: true
+          volumes:
+            - name: config
+              configMap:
+                name: {{ include "cube-maker.fullname" . }}-config
+                items:
+                  - key: application.properties
+                    path: application.properties

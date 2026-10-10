@@ -1,0 +1,151 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: node
+    static_configs:
+      - targets: ["192.0.2.11:9100"]
+        labels: {host: node1}
+      - targets: ["192.0.2.12:9100"]
+        labels: {host: node2}
+      - targets: ["192.0.2.13:9100"]
+        labels: {host: node3}
+      - targets: ["192.0.2.14:9100"]
+        labels: {host: node4}
+
+  - job_name: kafka-broker-jmx
+    # One JVM exposes both broker and controller metrics.
+    static_configs:
+      - targets: ["192.0.2.11:7071"]
+        labels: {host: node1}
+      - targets: ["192.0.2.12:7071"]
+        labels: {host: node2}
+      - targets: ["192.0.2.13:7071"]
+        labels: {host: node3}
+      - targets: ["192.0.2.14:7071"]
+        labels: {host: node4}
+
+  # Existing cluster-wide kafka_exporter; scrape once to avoid counting lag twice.
+  - job_name: kafka-exporter
+    static_configs:
+      - targets: ["192.0.2.11:9308"]
+        labels: {host: node1}
+
+  - job_name: hdfs-namenode
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["192.0.2.11:18020"]
+
+  - job_name: hdfs-datanode
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["192.0.2.11:19866"]
+
+  - job_name: hdfs-journalnode
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["192.0.2.11:18485"]
+
+  - job_name: spark-master
+    metrics_path: /metrics/master/prometheus/
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+            - {{ .Release.Namespace | quote }}
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app, __meta_kubernetes_pod_label_component]
+        action: keep
+        regex: spark;master
+      - source_labels: [__meta_kubernetes_pod_container_port_name]
+        action: keep
+        regex: webui
+      - source_labels: [__meta_kubernetes_pod_phase]
+        action: keep
+        regex: Running
+
+  - job_name: spark-worker
+    metrics_path: /metrics/prometheus/
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+            - {{ .Release.Namespace | quote }}
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app, __meta_kubernetes_pod_label_component]
+        action: keep
+        regex: spark;worker
+      - source_labels: [__meta_kubernetes_pod_container_port_name]
+        action: keep
+        regex: webui
+      - source_labels: [__meta_kubernetes_pod_phase]
+        action: keep
+        regex: Running
+
+  - job_name: starrocks-fe
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - "192.0.2.11:8030"
+          - "192.0.2.12:8030"
+          - "192.0.2.13:8030"
+          - "192.0.2.14:8030"
+
+  - job_name: starrocks-be
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - "192.0.2.11:8040"
+          - "192.0.2.12:8040"
+          - "192.0.2.13:8040"
+          - "192.0.2.14:8040"
+
+  - job_name: pushgateway
+    honor_labels: true
+    static_configs:
+      - targets: ["{{ .Release.Name }}-pushgateway:9091"]
+
+  - job_name: app-metrics
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+            - {{ .Release.Namespace | quote }}
+
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: "true"
+
+      - source_labels: [__meta_kubernetes_pod_container_port_name]
+        action: keep
+        regex: metrics
+
+      - source_labels: [__meta_kubernetes_pod_phase]
+        action: keep
+        regex: Running
+
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+
+      - source_labels:
+          - __address__
+          - __meta_kubernetes_pod_annotation_prometheus_io_port
+        action: replace
+        target_label: __address__
+        regex: ([^:]+)(?::\d+)?;(\d+)
+        replacement: $1:$2
+
+      - source_labels: [__meta_kubernetes_namespace]
+        action: replace
+        target_label: namespace
+
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+        action: replace
+        target_label: app

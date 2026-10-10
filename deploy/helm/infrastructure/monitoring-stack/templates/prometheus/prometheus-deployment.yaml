@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "monitoring-stack.resourceName" (dict "root" . "component" "prometheus") }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+
+  selector:
+    matchLabels:
+      app: {{ include "monitoring-stack.resourceName" (dict "root" . "component" "prometheus") }}
+
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/prometheus/prometheus-configmap.yaml") . | sha256sum }}
+      labels:
+        app: {{ include "monitoring-stack.resourceName" (dict "root" . "component" "prometheus") }}
+
+    spec:
+      serviceAccountName: {{ include "monitoring-stack.resourceName" (dict "root" . "component" "prometheus") }}
+      securityContext:
+        fsGroup: 65534
+      containers:
+        - name: prometheus
+          image: "{{ .Values.prometheus.image.repository }}:{{ .Values.prometheus.image.tag }}"
+          imagePullPolicy: {{ .Values.prometheus.image.pullPolicy }}
+
+          args:
+            - "--config.file=/etc/prometheus/prometheus.yml"
+            - "--storage.tsdb.path=/prometheus"
+            - "--storage.tsdb.retention.time={{ .Values.prometheus.retention }}"
+            - "--web.enable-lifecycle"
+
+          ports:
+            - name: http
+              containerPort: 9090
+
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            timeoutSeconds: 5
+
+          volumeMounts:
+            - name: prometheus-data
+              mountPath: /prometheus
+            - name: prometheus-config
+              mountPath: /etc/prometheus
+
+      volumes:
+        - name: prometheus-data
+          persistentVolumeClaim:
+            claimName: {{ include "monitoring-stack.resourceName" (dict "root" . "component" "prometheus-data") }}
+        - name: prometheus-config
+          configMap:
+            name: {{ include "monitoring-stack.resourceName" (dict "root" . "component" "prometheus-config") }}

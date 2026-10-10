@@ -1,0 +1,57 @@
+---
+- name: Deploy Apache Kafka on 4 Nodes (KRaft Mode)
+  hosts: kafka
+  tags: [kafka]
+  pre_tasks:
+    - name: Require a deployment-specific Kafka cluster ID
+      ansible.builtin.assert:
+        that:
+          - cluster_id is match('^[A-Za-z0-9_-]{22}$')
+        fail_msg: "Set KAFKA_CLUSTER_ID to a persistent Kafka cluster UUID; see deploy/ansible/README.md."
+  roles:
+    - kafka
+
+- name: Prepare StarRocks artifacts
+  hosts: starrocks
+  any_errors_fatal: true
+  tags: [starrocks]
+  pre_tasks:
+    - name: Require a configured StarRocks root password
+      ansible.builtin.assert:
+        that:
+          - starrocks_root_password | default('') | length > 0
+          - starrocks_root_password | default('') != 'CHANGE_ME_STARROCKS_PASSWORD'
+        fail_msg: "Create inventory/group_vars/all/vault.yml from vault.example.yml and set a StarRocks root password."
+      no_log: true
+    - name: Install StarRocks controller Python dependency
+      ansible.builtin.pip:
+        name: "PyMySQL==1.2.0"
+        executable: "{{ ansible_playbook_python | dirname }}/pip"
+        extra_args: "--index-url https://pypi.org/simple"
+      delegate_to: localhost
+      run_once: true
+      become: false
+  roles:
+    - starrocks_artifacts
+
+- name: Deploy StarRocks FE
+  hosts: starrocks_fe
+  serial: 1
+  any_errors_fatal: true
+  tags: [starrocks]
+  roles:
+    - starrocks_fe
+
+- name: Deploy StarRocks BE
+  hosts: starrocks_be
+  serial: 1
+  any_errors_fatal: true
+  tags: [starrocks]
+  roles:
+    - starrocks_be
+
+- name: Initialize and verify StarRocks database
+  hosts: starrocks_leader
+  tags: [starrocks]
+  roles:
+    - starrocks_sql

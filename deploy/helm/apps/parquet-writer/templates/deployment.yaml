@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "parquet-writer.fullname" . }}
+  labels:
+    {{- include "parquet-writer.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  revisionHistoryLimit: 2
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "parquet-writer.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "parquet-writer.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: {{ .Values.metrics.port | quote }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      containers:
+        - name: {{ include "parquet-writer.name" . }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+              protocol: TCP
+          env:
+            - name: HADOOP_CONF_DIR
+              value: /etc/hadoop/conf
+            - name: HADOOP_USER_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.hdfs.configMapName }}
+                  key: HADOOP_USER_NAME
+          envFrom:
+            - configMapRef:
+                name: {{ include "parquet-writer.fullname" . }}-config
+          volumeMounts:
+            - name: app-config
+              mountPath: /app/config
+              readOnly: true
+            - name: hdfs-conf
+              mountPath: /etc/hadoop/conf
+              readOnly: true
+      volumes:
+        - name: app-config
+          configMap:
+            name: {{ include "parquet-writer.fullname" . }}-config
+            items:
+              - key: application.properties
+                path: application.properties
+        - name: hdfs-conf
+          configMap:
+            name: {{ .Values.hdfs.configMapName }}
+            items:
+              - key: core-site.xml
+                path: core-site.xml
+              - key: hdfs-site.xml
+                path: hdfs-site.xml

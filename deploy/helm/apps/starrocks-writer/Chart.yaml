@@ -1,0 +1,6 @@
+apiVersion: v2
+name: starrocks-writer
+description: Helm chart for the Pana Big Data StarRocks Writer (Kafka consumer -> Stream Load)
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

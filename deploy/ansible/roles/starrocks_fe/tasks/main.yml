@@ -1,0 +1,39 @@
+---
+- name: Check existing FE metadata
+  ansible.builtin.stat:
+    path: "{{ starrocks_fe_meta_dir }}/image/ROLE"
+  register: starrocks_fe_existing_metadata
+
+- name: Require a healthy FE cluster before reconfiguration
+  when:
+    - starrocks_fe_existing_metadata.stat.exists
+    - not ansible_check_mode
+  block:
+    - name: Read registered FEs
+      community.mysql.mysql_query:
+        login_user: root
+        login_password: "{{ starrocks_root_password }}"
+        login_host: "{{ hostvars[inventory_hostname]['ansible_host'] }}"
+        login_port: "{{ starrocks_fe_query_port }}"
+        query: "SHOW FRONTENDS"
+      delegate_to: localhost
+      register: starrocks_fe_restart_health
+      changed_when: false
+
+    - name: Check that all inventory FEs are registered and healthy
+      ansible.builtin.assert:
+        that:
+          - starrocks_fe_restart_health.query_result[0] | length == groups['starrocks_fe'] | length
+          - starrocks_fe_restart_health.query_result[0] | rejectattr('Alive', 'equalto', 'true') | list | length == 0
+          - starrocks_fe_restart_health.query_result[0] | rejectattr('Join', 'equalto', 'true') | list | length == 0
+        fail_msg: "Restore the existing FE cluster to a healthy state before rerunning deployment."
+
+- name: Install and configure FE
+  ansible.builtin.include_tasks: install.yml
+
+- name: Register this follower FE on the coordinator
+  ansible.builtin.include_tasks: register.yml
+  when: inventory_hostname not in groups['starrocks_leader']
+
+- name: Start FE and wait until it joins the cluster
+  ansible.builtin.include_tasks: start.yml

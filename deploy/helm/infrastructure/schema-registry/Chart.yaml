@@ -1,0 +1,6 @@
+apiVersion: v2
+name: schema-registry
+description: Confluent Schema Registry backed by the Pana Big Data Kafka cluster
+type: application
+version: 0.1.0
+appVersion: "8.0.2"

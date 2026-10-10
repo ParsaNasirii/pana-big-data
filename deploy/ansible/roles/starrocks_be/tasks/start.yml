@@ -1,0 +1,13 @@
+---
+- name: Enable and start starrocks-be service
+  ansible.builtin.systemd:
+    name: starrocks-be
+    state: started
+    enabled: true
+
+- name: Wait for BE HTTP port {{ starrocks_be_http_port }}
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ starrocks_be_http_port }}"
+    timeout: "{{ starrocks_be_http_wait_timeout }}"
+  when: not ansible_check_mode

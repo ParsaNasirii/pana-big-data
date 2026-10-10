@@ -1,0 +1,88 @@
+{{- if .Values.history.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "spark-cluster.resourceName" (dict "root" . "component" "history") }}
+  labels:
+    app: {{ include "spark-cluster.name" . }}
+    component: history
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ include "spark-cluster.name" . }}
+      component: history
+  template:
+    metadata:
+      labels:
+        app: {{ include "spark-cluster.name" . }}
+        component: history
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/history/configmap.yaml") . | sha256sum }}
+    spec:
+      initContainers:
+        - name: prepare-event-logs
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: [/opt/spark/bin/spark-class]
+          args:
+            - org.apache.hadoop.fs.FsShell
+            - -mkdir
+            - -p
+            - {{ .Values.history.eventLogs.directory | quote }}
+          env:
+            - name: HADOOP_CONF_DIR
+              value: {{ .Values.history.eventLogs.hadoopConfigDirectory | quote }}
+            - name: HADOOP_USER_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.history.eventLogs.hdfsConfigMapName }}
+                  key: HADOOP_USER_NAME
+          volumeMounts:
+            - name: hadoop-conf
+              mountPath: {{ .Values.history.eventLogs.hadoopConfigDirectory | quote }}
+              readOnly: true
+      containers:
+        - name: history
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: [/opt/spark/bin/spark-class]
+          args: [org.apache.spark.deploy.history.HistoryServer]
+          env:
+            - name: SPARK_CONF_DIR
+              value: /opt/spark/conf
+            - name: HADOOP_CONF_DIR
+              value: {{ .Values.history.eventLogs.hadoopConfigDirectory | quote }}
+            - name: HADOOP_USER_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.history.eventLogs.hdfsConfigMapName }}
+                  key: HADOOP_USER_NAME
+          ports:
+            - name: webui
+              containerPort: {{ .Values.history.webuiPort }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: webui
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: config
+              mountPath: /opt/spark/conf
+            - name: hadoop-conf
+              mountPath: {{ .Values.history.eventLogs.hadoopConfigDirectory | quote }}
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "spark-cluster.resourceName" (dict "root" . "component" "history-config") }}
+        - name: hadoop-conf
+          configMap:
+            name: {{ .Values.history.eventLogs.hdfsConfigMapName }}
+            items:
+              - key: core-site.xml
+                path: core-site.xml
+              - key: hdfs-site.xml
+                path: hdfs-site.xml
+{{- end }}

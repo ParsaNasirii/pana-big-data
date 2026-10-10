@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "parquet-maintenance.fullname" . }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    {{- include "parquet-maintenance.selector" . | nindent 4 }}
+  ports:
+    - name: driver-rpc
+      port: {{ .Values.spark.driverPort }}
+      targetPort: driver-rpc
+    - name: block-manager
+      port: {{ .Values.spark.blockManagerPort }}
+      targetPort: block-manager

@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "postgres.name" . }}
+spec:
+  clusterIP: None
+
+  selector:
+    app: {{ include "postgres.name" . }}
+    {{ .Values.patroni.roleLabel }}: {{ .Values.patroni.leaderLabelValue }}
+
+  ports:
+    - name: {{ include "postgres.name" . }}
+      port: 5432
+      targetPort: {{ include "postgres.name" . }}
+
+    - name: patroni
+      port: 8008
+      targetPort: patroni

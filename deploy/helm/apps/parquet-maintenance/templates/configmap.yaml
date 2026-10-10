@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "parquet-maintenance.fullname" . }}-config
+data:
+  application.properties: |-
+    compaction.base.path={{ .Values.compaction.basePath }}
+    compaction.dry.run={{ .Values.compaction.dryRun }}
+    compaction.target.file.size.mib={{ .Values.compaction.targetFileSizeMiB }}
+    cleanup.temp.max.age.hours={{ .Values.cleanup.tempMaxAgeHours }}
+    cleanup.lock.max.age.hours={{ .Values.cleanup.lockMaxAgeHours }}
+    hadoop.config.directory={{ .Values.hdfs.configDirectory }}
+    parquet.time.zone={{ .Values.parquet.timeZone }}
+    parquet.compression.codec={{ .Values.parquet.compressionCodec }}
+    parquet.compression.codec.zstd.level={{ .Values.parquet.zstdCompressionLevel }}

@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="860" viewBox="0 0 1440 860" fill="none" role="img" aria-labelledby="architecture-title architecture-description">
+  <title id="architecture-title">Pana Big Data system architecture</title>
+  <desc id="architecture-description">An external Avro producer sends events to Kafka. Two independent consumers read Kafka: the StarRocks writer loads the live StarRocks store, while the Parquet writer archives to HDFS. Cube Maker reads HDFS and writes aggregate cubes to PostgreSQL. Both writers use Schema Registry. An on-demand backfill job restores historical HDFS data into StarRocks. Parquet maintenance compacts files and cleans temporary files in HDFS. The REST API and Grafana each query both StarRocks and PostgreSQL.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1440" y2="860" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#101D30"/>
+      <stop offset=".65" stop-color="#0B1525"/>
+      <stop offset="1" stop-color="#102632"/>
+    </linearGradient>
+    <marker id="arrow-cyan" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M1 1L9 5L1 9" stroke="#6CDCF1" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="arrow-teal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M1 1L9 5L1 9" stroke="#70DDC7" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M1 1L9 5L1 9" stroke="#EDBC76" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="arrow-slate" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M1 1L9 5L1 9" stroke="#A9BBCE" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <style>
+      text { font-family: Inter, 'Segoe UI', Helvetica, Arial, sans-serif; }
+      .title { fill: #F2F7FC; font-weight: 700; font-size: 21px; }
+      .detail { fill: #A9BDCF; font-size: 14px; }
+      .eyebrow { font-weight: 600; font-size: 12px; letter-spacing: 1.7px; }
+      .flow { fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+    </style>
+  </defs>
+
+  <rect x=".5" y=".5" width="1439" height="859" rx="20" fill="url(#background)" stroke="#637F99" stroke-opacity=".3"/>
+  <path d="M48 128H1392M48 790H1392" stroke="#65809A" stroke-opacity=".22"/>
+  <rect x="48" y="42" width="26" height="3" rx="1.5" fill="#70DDC7"/>
+  <text x="88" y="48" class="eyebrow" fill="#A9BDCF">SYSTEM ARCHITECTURE</text>
+  <text x="46" y="94" fill="#F2F7FC" font-size="36" font-weight="750" letter-spacing="-.5">Pana Big Data</text>
+  <text x="382" y="91" fill="#A9BDCF" font-size="18">Live ingestion, durable archives, and a shared query layer.</text>
+
+  <!-- Path headings remain separate from the connecting edges. -->
+  <text x="412" y="193" class="eyebrow" fill="#6CDCF1">01 / LIVE PATH</text>
+  <text x="412" y="489" class="eyebrow" fill="#70DDC7">02 / BATCH PATH</text>
+  <text x="1226" y="294" class="eyebrow" fill="#A9BDCF">03 / READ LAYER</text>
+
+  <!-- Kafka fans out to two independent consumers. -->
+  <path d="M190 390H226" class="flow" stroke="#A9BBCE" marker-end="url(#arrow-slate)"/>
+  <path d="M370 390H390V292H412" class="flow" stroke="#6CDCF1" marker-end="url(#arrow-cyan)"/>
+  <path d="M370 390H390V590H412" class="flow" stroke="#70DDC7" marker-end="url(#arrow-teal)"/>
+  <circle cx="390" cy="390" r="4" fill="#B9CAD9"/>
+  <path d="M584 292H1010" class="flow" stroke="#6CDCF1" marker-end="url(#arrow-cyan)"/>
+  <text x="764" y="278" class="detail" fill="#6CDCF1">Stream Load</text>
+  <path d="M584 590H626" class="flow" stroke="#70DDC7" marker-end="url(#arrow-teal)"/>
+  <path d="M780 590H822" class="flow" stroke="#70DDC7" marker-end="url(#arrow-teal)"/>
+  <path d="M988 590H1010" class="flow" stroke="#70DDC7" marker-end="url(#arrow-teal)"/>
+
+  <!-- Schema lookup is a control connection, not a third ingestion path.
+       The gap at the live edge indicates an unconnected crossing. -->
+  <path d="M642 202H610V284" class="flow" stroke="#A9BBCE" style="stroke-width:1.5px" stroke-dasharray="5 7" stroke-opacity=".7"/>
+  <path d="M610 302V518H498V544" class="flow" stroke="#A9BBCE" style="stroke-width:1.5px" stroke-dasharray="5 7" stroke-opacity=".7" marker-end="url(#arrow-slate)"/>
+  <path d="M610 222H498V246" class="flow" stroke="#A9BBCE" style="stroke-width:1.5px" stroke-dasharray="5 7" stroke-opacity=".7" marker-end="url(#arrow-slate)"/>
+
+  <!-- Historical restoration starts at HDFS and rejoins StarRocks. -->
+  <path d="M703 544V438H824" class="flow" stroke="#EDBC76" marker-end="url(#arrow-amber)"/>
+  <path d="M994 438H1096V338" class="flow" stroke="#EDBC76" marker-end="url(#arrow-amber)"/>
+  <text x="715" y="422" class="detail" fill="#EDBC76">On demand</text>
+
+  <!-- The shared read bus explicitly connects each reader to both stores. -->
+  <path d="M1182 292H1206V590H1182" class="flow" stroke="#A9BBCE"/>
+  <path d="M1206 390H1230M1206 560H1230" class="flow" stroke="#A9BBCE" marker-end="url(#arrow-slate)"/>
+  <circle cx="1206" cy="390" r="4" fill="#A9BBCE"/>
+  <circle cx="1206" cy="560" r="4" fill="#A9BBCE"/>
+
+  <!-- External source and transport. -->
+  <rect x="48" y="344" width="142" height="92" rx="12" fill="#142236" stroke="#7793AB" stroke-opacity=".4"/>
+  <text x="67" y="374" class="title">External</text>
+  <text x="67" y="400" class="title">producer</text>
+  <text x="67" y="423" class="detail">Avro events</text>
+  <rect x="226" y="344" width="144" height="92" rx="12" fill="#142236" stroke="#A3BCCE" stroke-opacity=".55"/>
+  <text x="249" y="382" class="title">Kafka</text>
+  <text x="249" y="409" class="detail">Event transport</text>
+
+  <!-- Writers and schema service. -->
+  <rect x="412" y="246" width="172" height="92" rx="12" fill="#132C3C" stroke="#6CDCF1" stroke-opacity=".7"/>
+  <path d="M430 247H566" stroke="#6CDCF1" stroke-width="2"/>
+  <text x="432" y="280" class="title">StarRocks</text>
+  <text x="432" y="306" class="title">writer</text>
+  <rect x="412" y="544" width="172" height="92" rx="12" fill="#122D32" stroke="#70DDC7" stroke-opacity=".7"/>
+  <path d="M430 545H566" stroke="#70DDC7" stroke-width="2"/>
+  <text x="432" y="578" class="title">Parquet</text>
+  <text x="432" y="604" class="title">writer</text>
+  <rect x="642" y="162" width="258" height="78" rx="12" fill="#152437" stroke="#A9BBCE" stroke-opacity=".35" stroke-dasharray="5 5"/>
+  <text x="662" y="193" class="title">Schema Registry</text>
+  <text x="662" y="218" class="detail">Avro contracts for both writers</text>
+
+  <!-- Persistent stores and processing jobs. -->
+  <rect x="1010" y="246" width="172" height="92" rx="12" fill="#153244" stroke="#6CDCF1" stroke-opacity=".75"/>
+  <text x="1030" y="282" class="title">StarRocks</text>
+  <text x="1030" y="310" class="detail">Live &amp; restored data</text>
+  <rect x="626" y="544" width="154" height="92" rx="12" fill="#153238" stroke="#70DDC7" stroke-opacity=".75"/>
+  <text x="646" y="580" class="title">HDFS</text>
+  <text x="646" y="608" class="detail">Parquet archives</text>
+  <rect x="822" y="544" width="166" height="92" rx="12" fill="#122D32" stroke="#70DDC7" stroke-opacity=".7"/>
+  <text x="840" y="578" class="title">Cube Maker</text>
+  <text x="840" y="606" class="detail">Spark aggregates</text>
+  <rect x="1010" y="544" width="172" height="92" rx="12" fill="#153238" stroke="#70DDC7" stroke-opacity=".75"/>
+  <text x="1029" y="580" class="title">PostgreSQL</text>
+  <text x="1029" y="608" class="detail">Aggregate cubes</text>
+  <rect x="824" y="397" width="170" height="82" rx="12" fill="#2B2930" stroke="#EDBC76" stroke-opacity=".7"/>
+  <text x="844" y="430" class="title">Backfill job</text>
+  <text x="844" y="455" class="detail" fill="#DDC7AA">Staged restoration</text>
+
+  <!-- API and observability each read the two stores. -->
+  <rect x="1230" y="344" width="162" height="92" rx="12" fill="#192B3E" stroke="#A9BBCE" stroke-opacity=".55"/>
+  <text x="1250" y="380" class="title">REST API</text>
+  <text x="1250" y="408" class="detail">Query access</text>
+  <rect x="1230" y="514" width="162" height="92" rx="12" fill="#192B3E" stroke="#A9BBCE" stroke-opacity=".55"/>
+  <text x="1250" y="550" class="title">Grafana</text>
+  <text x="1250" y="578" class="detail">SQL dashboards</text>
+  <text x="1230" y="641" class="detail">Both readers query</text>
+  <text x="1230" y="662" class="detail">both stores.</text>
+
+  <!-- Maintenance is attached to the archive without becoming a data hop. -->
+  <path d="M703 636V691" stroke="#70DDC7" stroke-width="1.5" stroke-opacity=".5" stroke-dasharray="4 6"/>
+  <rect x="626" y="691" width="342" height="65" rx="10" fill="#11262E" stroke="#70DDC7" stroke-opacity=".25"/>
+  <text x="644" y="716" fill="#AEE2D8" font-size="15" font-weight="600">Parquet maintenance</text>
+  <text x="644" y="739" class="detail">Compaction · Temporary-file cleanup</text>
+
+  <!-- Legend: solid paths carry data; dashed paths resolve schemas. -->
+  <g class="detail">
+    <path d="M49 822H80" class="flow" stroke="#6CDCF1" marker-end="url(#arrow-cyan)"/>
+    <text x="92" y="827">Live records</text>
+    <path d="M255 822H286" class="flow" stroke="#70DDC7" marker-end="url(#arrow-teal)"/>
+    <text x="298" y="827">Archives &amp; cubes</text>
+    <path d="M511 822H542" class="flow" stroke="#EDBC76" marker-end="url(#arrow-amber)"/>
+    <text x="554" y="827">Historical restore</text>
+    <path d="M782 822H817" stroke="#A9BBCE" stroke-width="1.5" stroke-dasharray="4 5"/>
+    <text x="829" y="827">Schema lookup</text>
+    <path d="M1050 822H1081" class="flow" stroke="#A9BBCE" marker-end="url(#arrow-slate)"/>
+    <text x="1093" y="827">Queries &amp; dashboards</text>
+  </g>
+</svg>

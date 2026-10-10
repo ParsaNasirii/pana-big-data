@@ -1,0 +1,16 @@
+{{- if .Values.externalService.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "postgres.resourceName" (dict "root" . "component" "external") }}
+spec:
+  type: {{ .Values.externalService.type }}
+
+  selector:
+    {{- toYaml .Values.externalService.selector | nindent 4 }}
+
+  ports:
+    - name: {{ include "postgres.name" . }}
+      port: {{ .Values.externalService.port }}
+      targetPort: {{ include "postgres.name" . }}
+{{- end }}

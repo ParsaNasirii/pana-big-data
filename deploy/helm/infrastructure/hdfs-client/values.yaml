@@ -1,0 +1,2 @@
+configMapName: hdfs-client-config
+user: netflow

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: parquet-maintenance
+description: Scheduled maintenance of hourly Parquet files and temporary data
+type: application
+version: 0.1.0
+appVersion: "0.0.1-SNAPSHOT"

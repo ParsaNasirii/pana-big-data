@@ -1,0 +1,44 @@
+---
+- name: Ensure FE directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ starrocks_user }}"
+    group: "{{ starrocks_user }}"
+    mode: "0755"
+  loop:
+    - "{{ starrocks_fe_home }}"
+    - "{{ starrocks_fe_home }}/conf"
+    - "{{ starrocks_fe_meta_dir }}"
+    - "{{ starrocks_fe_log_dir }}"
+
+- name: Render FE configuration file (fe.conf)
+  ansible.builtin.template:
+    src: fe.conf.j2
+    dest: "{{ starrocks_fe_home }}/conf/fe.conf"
+    owner: "{{ starrocks_user }}"
+    group: "{{ starrocks_user }}"
+    mode: "0644"
+  notify:
+    - reload systemd daemon
+    - restart starrocks-fe
+
+- name: Render starrocks-fe systemd unit
+  ansible.builtin.template:
+    src: starrocks-fe.service.j2
+    dest: /etc/systemd/system/starrocks-fe.service
+    mode: "0644"
+  notify:
+    - reload systemd daemon
+    - restart starrocks-fe
+
+- name: Collect service facts (restart guard for the FE unit)
+  ansible.builtin.service_facts:
+
+- name: Flush handlers so systemd reloads a changed unit before enabling
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable starrocks-fe service (without starting it)
+  ansible.builtin.systemd:
+    name: starrocks-fe
+    enabled: true

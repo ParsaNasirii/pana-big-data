@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "spark-cluster.resourceName" (dict "root" . "component" "worker") }}
+  labels:
+    app: {{ include "spark-cluster.name" . }}
+    component: worker
+
+spec:
+  selector:
+    matchLabels:
+      app: {{ include "spark-cluster.name" . }}
+      component: worker
+
+  template:
+    metadata:
+      labels:
+        app: {{ include "spark-cluster.name" . }}
+        component: worker
+
+    spec:
+      enableServiceLinks: false
+
+      containers:
+        - name: {{ include "spark-cluster.resourceName" (dict "root" . "component" "worker") }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+
+          env:
+            - name: SPARK_WORKER_OPTS
+              value: >-
+                -Dspark.metrics.conf.worker.sink.prometheusServlet.class=org.apache.spark.metrics.sink.PrometheusServlet
+                -Dspark.metrics.conf.worker.sink.prometheusServlet.path=/metrics/prometheus
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+
+          command:
+            - /opt/spark/bin/spark-class
+
+          args:
+            - org.apache.spark.deploy.worker.Worker
+            - "spark://{{ include "spark-cluster.resourceName" (dict "root" . "component" "master") }}:{{ .Values.master.port }}"
+            - --host
+            - "$(POD_IP)"
+            - --port
+            - "{{ .Values.worker.port }}"
+            - --webui-port
+            - "{{ .Values.worker.webuiPort }}"
+            - --cores
+            - "{{ .Values.worker.cores }}"
+            - --memory
+            - "{{ .Values.worker.memory }}"
+
+          ports:
+            - name: worker
+              containerPort: {{ .Values.worker.port }}
+
+            - name: webui
+              containerPort: {{ .Values.worker.webuiPort }}
+              hostPort: {{ .Values.worker.webuiPort }}

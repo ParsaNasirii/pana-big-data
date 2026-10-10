@@ -1,0 +1,70 @@
+---
+- name: Create dedicated starrocks group
+  ansible.builtin.group:
+    name: "{{ starrocks_user }}"
+    system: true
+    state: present
+
+- name: Create dedicated starrocks service user
+  ansible.builtin.user:
+    name: "{{ starrocks_user }}"
+    group: "{{ starrocks_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    state: present
+
+- name: Create artifact cache and install directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ starrocks_artifact_cache_dir }}"
+    - "{{ starrocks_install_base }}"
+    - "{{ starrocks_java_home }}"
+
+- name: Install Java 17 required by StarRocks
+  ansible.builtin.unarchive:
+    src: "{{ starrocks_java_url }}"
+    dest: "{{ starrocks_java_home }}"
+    remote_src: true
+    extra_opts:
+      - --strip-components=1
+    creates: "{{ starrocks_java_home }}/bin/java"
+
+- name: Download StarRocks {{ starrocks_version }} distribution ({{ starrocks_artifact_filename }})
+  ansible.builtin.get_url:
+    url: "{{ starrocks_download_base_url }}/{{ starrocks_artifact_filename }}"
+    dest: "{{ starrocks_artifact_cache_dir }}/{{ starrocks_artifact_filename }}"
+    tmp_dest: "{{ starrocks_artifact_cache_dir }}"
+    checksum: "sha256:{{ starrocks_checksum_sha256 }}"
+    mode: "0644"
+    timeout: 60
+
+- name: Extract StarRocks into {{ starrocks_install_base }} (strip wrapper directory)
+  ansible.builtin.unarchive:
+    src: "{{ starrocks_artifact_cache_dir }}/{{ starrocks_artifact_filename }}"
+    dest: "{{ starrocks_install_base }}"
+    remote_src: true
+    extra_opts:
+      - --strip-components=1
+    creates: "{{ starrocks_install_base }}/fe/bin/start_fe.sh"
+
+- name: Prepare FE meta and BE storage directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ starrocks_user }}"
+    group: "{{ starrocks_user }}"
+    mode: "0755"
+  loop:
+    - "{{ starrocks_install_base }}/fe/meta"
+    - "{{ starrocks_install_base }}/be/storage"
+
+- name: Set ownership of the StarRocks install tree to {{ starrocks_user }}
+  ansible.builtin.file:
+    path: "{{ starrocks_install_base }}"
+    owner: "{{ starrocks_user }}"
+    group: "{{ starrocks_user }}"
+    state: directory
+    recurse: true

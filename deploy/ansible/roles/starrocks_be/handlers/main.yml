@@ -1,0 +1,10 @@
+---
+- name: reload systemd daemon
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: restart starrocks-be
+  ansible.builtin.systemd:
+    name: starrocks-be
+    state: restarted
+  when: hostvars[inventory_hostname]['ansible_facts'].services['starrocks-be.service'] is defined and hostvars[inventory_hostname]['ansible_facts'].services['starrocks-be.service'].state == 'running'

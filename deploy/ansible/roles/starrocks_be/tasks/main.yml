@@ -1,0 +1,39 @@
+---
+- name: Probe whether root still has no password
+  community.mysql.mysql_query:
+    login_user: root
+    login_host: "{{ hostvars[groups['starrocks_leader'][0]]['ansible_host'] }}"
+    login_port: "{{ starrocks_fe_query_port }}"
+    query: "SELECT 1"
+  delegate_to: localhost
+  register: starrocks_root_no_password
+  failed_when: false
+  changed_when: false
+
+- name: Read registered BEs
+  community.mysql.mysql_query:
+    login_user: root
+    login_password: "{{ starrocks_root_password if starrocks_root_no_password.query_result is not defined else omit }}"
+    login_host: "{{ hostvars[groups['starrocks_leader'][0]]['ansible_host'] }}"
+    login_port: "{{ starrocks_fe_query_port }}"
+    query: "SHOW BACKENDS"
+  delegate_to: localhost
+  register: starrocks_be_backends
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Require healthy registered BEs before reconfiguration
+  ansible.builtin.assert:
+    that:
+      - starrocks_be_backends.query_result[0] | rejectattr('Alive', 'equalto', 'true') | list | length == 0
+    fail_msg: "Restore the existing BE cluster to a healthy state before rerunning deployment."
+  when: not ansible_check_mode
+
+- name: Install and configure BE
+  ansible.builtin.include_tasks: install.yml
+
+- name: Start BE
+  ansible.builtin.include_tasks: start.yml
+
+- name: Register this BE on the coordinator FE
+  ansible.builtin.include_tasks: register.yml

@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "monitoring-stack.resourceName" (dict "root" . "component" "pushgateway") }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: {{ include "monitoring-stack.resourceName" (dict "root" . "component" "pushgateway") }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "monitoring-stack.resourceName" (dict "root" . "component" "pushgateway") }}
+    spec:
+      securityContext:
+        fsGroup: 65534
+      containers:
+        - name: pushgateway
+          image: "{{ .Values.pushgateway.image.repository }}:{{ .Values.pushgateway.image.tag }}"
+          imagePullPolicy: {{ .Values.pushgateway.image.pullPolicy }}
+          args:
+            - "--persistence.file=/data/pushgateway.data"
+          ports:
+            - name: http
+              containerPort: 9091
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+          volumeMounts:
+            - name: pushgateway-data
+              mountPath: /data
+      volumes:
+        - name: pushgateway-data
+          persistentVolumeClaim:
+            claimName: {{ include "monitoring-stack.resourceName" (dict "root" . "component" "pushgateway-data") }}

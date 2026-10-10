@@ -1,0 +1,144 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "monitoring-stack.resourceName" (dict "root" . "component" "grafana") }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+
+  selector:
+    matchLabels:
+      app: {{ include "monitoring-stack.resourceName" (dict "root" . "component" "grafana") }}
+
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/grafana/grafana-configmap.yaml") . | sha256sum }}
+      labels:
+        app: {{ include "monitoring-stack.resourceName" (dict "root" . "component" "grafana") }}
+
+    spec:
+      securityContext:
+        fsGroup: 472
+      initContainers:
+        - name: prepare-dashboards
+          image: "{{ .Values.grafana.image.repository }}:{{ .Values.grafana.image.tag }}"
+          imagePullPolicy: {{ .Values.grafana.image.pullPolicy }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              cp -RL "/etc/grafana/dashboard-sources/Pana Big Data" /var/lib/grafana/dashboards/
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 472
+            runAsGroup: 472
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            - name: dashboard-sources
+              mountPath: /etc/grafana/dashboard-sources
+              readOnly: true
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
+
+      containers:
+        - name: grafana
+          image: "{{ .Values.grafana.image.repository }}:{{ .Values.grafana.image.tag }}"
+          imagePullPolicy: {{ .Values.grafana.image.pullPolicy }}
+
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "grafana.existingSecret is required" .Values.grafana.existingSecret | quote }}
+                  key: admin-user
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "grafana.existingSecret is required" .Values.grafana.existingSecret | quote }}
+                  key: admin-password
+            - name: STARROCKS_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "grafana.existingSecret is required" .Values.grafana.existingSecret | quote }}
+                  key: STARROCKS_USERNAME
+            - name: STARROCKS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "grafana.existingSecret is required" .Values.grafana.existingSecret | quote }}
+                  key: STARROCKS_PASSWORD
+            - name: POSTGRES_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "grafana.existingSecret is required" .Values.grafana.existingSecret | quote }}
+                  key: POSTGRES_USERNAME
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "grafana.existingSecret is required" .Values.grafana.existingSecret | quote }}
+                  key: POSTGRES_PASSWORD
+
+          ports:
+            - name: http
+              containerPort: 3000
+
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            timeoutSeconds: 5
+
+          volumeMounts:
+            - name: grafana-data
+              mountPath: /var/lib/grafana
+
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
+              readOnly: true
+
+            - name: dashboard-provisioning
+              mountPath: /etc/grafana/provisioning/dashboards
+
+            - name: datasource-provisioning
+              mountPath: /etc/grafana/provisioning/datasources
+
+      volumes:
+        - name: grafana-data
+          persistentVolumeClaim:
+            claimName: {{ include "monitoring-stack.resourceName" (dict "root" . "component" "grafana-data") }}
+
+        - name: dashboards
+          emptyDir: {}
+
+        - name: dashboard-sources
+          projected:
+            sources:
+              - configMap:
+                  name: {{ include "monitoring-stack.resourceName" (dict "root" . "component" "grafana-config") }}
+                  items:
+{{- range $path, $_ := .Files.Glob "dashboards/Infra/*.json" }}
+                    - key: {{ base $path | quote }}
+                      path: {{ printf "Pana Big Data/Infra/%s" (base $path) | quote }}
+{{- end }}
+{{- range $path, $_ := .Files.Glob "dashboards/Apps/*.json" }}
+                    - key: {{ base $path | quote }}
+                      path: {{ printf "Pana Big Data/Apps/%s" (base $path) | quote }}
+{{- end }}
+{{- range $path, $_ := .Files.Glob "dashboards/*.json" }}
+                    - key: {{ base $path | quote }}
+                      path: {{ printf "Pana Big Data/%s" (base $path) | quote }}
+{{- end }}
+
+        - name: dashboard-provisioning
+          configMap:
+            name: {{ include "monitoring-stack.resourceName" (dict "root" . "component" "grafana-config") }}
+            items:
+              - key: dashboards.yml
+                path: dashboards.yml
+
+        - name: datasource-provisioning
+          configMap:
+            name: {{ include "monitoring-stack.resourceName" (dict "root" . "component" "grafana-config") }}
+            items:
+              - key: prometheus.yml
+                path: prometheus.yml

@@ -1,0 +1,30 @@
+---
+- name: Add this BE if it is not registered yet
+  community.mysql.mysql_query:
+    login_user: root
+    login_password: "{{ starrocks_root_password if starrocks_root_no_password.query_result is not defined else omit }}"
+    login_host: "{{ hostvars[groups['starrocks_leader'][0]]['ansible_host'] }}"
+    login_port: "{{ starrocks_fe_query_port }}"
+    query: "ALTER SYSTEM ADD BACKEND '{{ hostvars[inventory_hostname]['ansible_host'] }}:{{ starrocks_be_heartbeat_port }}'"
+  delegate_to: localhost
+  when:
+    - not ansible_check_mode
+    - hostvars[inventory_hostname]['ansible_host'] not in (starrocks_be_backends.query_result[0] | map(attribute='IP') | list)
+
+- name: Wait for this BE to be alive before proceeding
+  community.mysql.mysql_query:
+    login_user: root
+    login_password: "{{ starrocks_root_password if starrocks_root_no_password.query_result is not defined else omit }}"
+    login_host: "{{ hostvars[groups['starrocks_leader'][0]]['ansible_host'] }}"
+    login_port: "{{ starrocks_fe_query_port }}"
+    query: "SHOW BACKENDS"
+  delegate_to: localhost
+  register: starrocks_started_backends
+  until: >-
+    ((starrocks_started_backends.query_result | default([[]]))[0]
+    | selectattr('IP', 'equalto', hostvars[inventory_hostname]['ansible_host'])
+    | selectattr('Alive', 'equalto', 'true') | list | length) == 1
+  retries: 60
+  delay: 5
+  changed_when: false
+  when: not ansible_check_mode

@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "spark-cluster.resourceName" (dict "root" . "component" "master") }}
+  labels:
+    app: {{ include "spark-cluster.name" . }}
+    component: master
+
+spec:
+  replicas: {{ .Values.master.replicas }}
+
+  selector:
+    matchLabels:
+      app: {{ include "spark-cluster.name" . }}
+      component: master
+
+  template:
+    metadata:
+      labels:
+        app: {{ include "spark-cluster.name" . }}
+        component: master
+
+    spec:
+      enableServiceLinks: false
+
+      containers:
+        - name: {{ include "spark-cluster.resourceName" (dict "root" . "component" "master") }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+
+          env:
+            - name: SPARK_MASTER_OPTS
+              value: >-
+                -Dspark.metrics.conf.master.sink.prometheusServlet.class=org.apache.spark.metrics.sink.PrometheusServlet
+                -Dspark.metrics.conf.master.sink.prometheusServlet.path=/metrics/master/prometheus
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+
+          command:
+            - /opt/spark/bin/spark-class
+
+          args:
+            - org.apache.spark.deploy.master.Master
+            - --host
+            - "$(POD_IP)"
+            - --port
+            - "{{ .Values.master.port }}"
+            - --webui-port
+            - "{{ .Values.master.webuiPort }}"
+
+          ports:
+            - name: {{ include "spark-cluster.name" . }}
+              containerPort: {{ .Values.master.port }}
+
+            - name: webui
+              containerPort: {{ .Values.master.webuiPort }}

@@ -1,0 +1,57 @@
+# Start at 00:00, 06:00, 12:00 and 18:00 in the configured time zone.
+schedule: "0 */6 * * *"
+timeZone: "Asia/Tehran"
+concurrencyPolicy: Forbid
+successfulJobsHistoryLimit: 3
+failedJobsHistoryLimit: 3
+backoffLimit: 2
+
+config:
+  # Wait this many hours after an hourly directory's hour ends before processing it.
+  cube.directory.settling.hours: "2"
+  spark.app.name: "cube-maker"
+  spark.cores.max: "8"
+  spark.executor.cores: "2"
+  spark.executor.memory: "1g"
+  spark.dynamicAllocation.enabled: "false"
+  spark.eventLog.enabled: "true"
+  spark.eventLog.dir: "hdfs://netflow/spark-event-logs"
+
+image:
+  repository: ghcr.io/your-github-user/pana-big-data/cube-maker
+  pullPolicy: Always
+  tag: "latest"
+
+metrics:
+  port: 8380
+
+pushGateway:
+  address: monitoring-pushgateway:9091
+
+driver:
+  port: 7078
+  blockManagerPort: 7079
+
+# Database credentials are supplied from this pre-existing Secret.
+existingSecret: ""
+
+env:
+  SPARK_MASTER: "spark://spark-master:7077"
+  PARQUET_BASE_PATH: "/netflow/"
+  HADOOP_USER_NAME: "netflow"
+  HDFS_DEFAULT_FS: "hdfs://netflow"
+  POSTGRES_URL: "jdbc:postgresql://postgres:5432/netflow_cube_db"
+  # Retries after the initial connection attempt; 0 disables retries.
+  POSTGRES_CONNECTION_RETRY_COUNT: "4"
+  POSTGRES_CONNECTION_RETRY_DELAY_MS: "1000"
+  HDFS_TIMEZONE: "Asia/Tehran"
+
+hadoopConfig:
+  dfs.nameservices: "netflow"
+  dfs.ha.namenodes.netflow: "netflow-node1,netflow-node2,netflow-node3"
+  dfs.namenode.rpc-address.netflow.netflow-node1: "netflow-node1:8020"
+  dfs.namenode.rpc-address.netflow.netflow-node2: "netflow-node2:8020"
+  dfs.namenode.rpc-address.netflow.netflow-node3: "netflow-node3:8020"
+  dfs.client.failover.proxy.provider.netflow: "org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider"
+
+terminationGracePeriodSeconds: 120

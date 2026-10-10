@@ -1,0 +1,88 @@
+---
+- name: Wait for leader FE query port {{ starrocks_fe_query_port }}
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ starrocks_fe_query_port }}"
+    timeout: "{{ starrocks_fe_http_wait_timeout }}"
+  when: not ansible_check_mode
+
+- name: Probe whether root still has no password
+  community.mysql.mysql_query:
+    login_user: root
+    login_host: "{{ hostvars[inventory_hostname]['ansible_host'] }}"
+    login_port: "{{ starrocks_fe_query_port }}"
+    query: "SELECT 1"
+  delegate_to: localhost
+  register: starrocks_root_no_password
+  failed_when: false
+  changed_when: false
+
+- name: Set root password (first run only)
+  community.mysql.mysql_query:
+    login_user: root
+    login_host: "{{ hostvars[inventory_hostname]['ansible_host'] }}"
+    login_port: "{{ starrocks_fe_query_port }}"
+    query: "SET PASSWORD FOR 'root' = PASSWORD(%s)"
+    positional_args:
+      - "{{ starrocks_root_password }}"
+  delegate_to: localhost
+  no_log: true
+  when:
+    - not ansible_check_mode
+    - starrocks_root_no_password.query_result is defined
+
+- name: Verify root login with the new password
+  community.mysql.mysql_query:
+    login_user: root
+    login_password: "{{ starrocks_root_password }}"
+    login_host: "{{ hostvars[inventory_hostname]['ansible_host'] }}"
+    login_port: "{{ starrocks_fe_query_port }}"
+    query: "SELECT 1"
+  delegate_to: localhost
+  changed_when: false
+
+- name: Read init.sql statements
+  ansible.builtin.set_fact:
+    starrocks_init_statements: >-
+      {{ lookup('file', starrocks_init_sql_path)
+         .split(';') | map('trim') | reject('eq', '') | list }}
+
+- name: Create database (statement 1 of init.sql)
+  community.mysql.mysql_query:
+    login_user: root
+    login_password: "{{ starrocks_root_password }}"
+    login_host: "{{ hostvars[inventory_hostname]['ansible_host'] }}"
+    login_port: "{{ starrocks_fe_query_port }}"
+    query: "{{ starrocks_init_statements[0] }}"
+  delegate_to: localhost
+  when: not ansible_check_mode
+  changed_when: false
+
+- name: Create tables (remaining init.sql statements in {{ starrocks_database }})
+  community.mysql.mysql_query:
+    login_user: root
+    login_password: "{{ starrocks_root_password }}"
+    login_host: "{{ hostvars[inventory_hostname]['ansible_host'] }}"
+    login_port: "{{ starrocks_fe_query_port }}"
+    login_db: "{{ starrocks_database }}"
+    query: >-
+      {{ starrocks_init_statements[1:]
+         | reject('match', '(?i)^USE ') | list }}
+  delegate_to: localhost
+  when: not ansible_check_mode
+  changed_when: false
+
+- name: Disable retention and use three replicas for netflow_raw
+  community.mysql.mysql_query:
+    login_user: root
+    login_password: "{{ starrocks_root_password }}"
+    login_host: "{{ hostvars[inventory_hostname]['ansible_host'] }}"
+    login_port: "{{ starrocks_fe_query_port }}"
+    login_db: "{{ starrocks_database }}"
+    query:
+      - 'ALTER TABLE netflow_raw SET ("partition_retention_condition" = "")'
+      - 'ALTER TABLE netflow_raw SET ("default.replication_num" = "3")'
+      - 'ALTER TABLE netflow_raw MODIFY PARTITION (*) SET ("replication_num" = "3")'
+  delegate_to: localhost
+  when: not ansible_check_mode
+  changed_when: false

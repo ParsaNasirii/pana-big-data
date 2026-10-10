@@ -1,0 +1,19 @@
+
+http_port = {{ starrocks_fe_http_port }}
+rpc_port = {{ starrocks_fe_rpc_port }}
+query_port = {{ starrocks_fe_query_port }}
+edit_log_port = {{ starrocks_fe_edit_log_port }}
+
+meta_dir = {{ starrocks_fe_meta_dir }}
+LOG_DIR = {{ starrocks_fe_log_dir }}
+DATE = "$(date +%Y%m%d-%H%M%S)"
+JAVA_OPTS = "-Dlog4j2.formatMsgNoLookups=true -Xmx{{ starrocks_fe_heap_size }} -XX:+UseG1GC -Xlog:gc*:${LOG_DIR}/fe.gc.log.$DATE:time -Djava.security.policy=${STARROCKS_HOME}/conf/udf_security.policy"
+sys_log_dir = {{ starrocks_fe_log_dir }}
+audit_log_dir = {{ starrocks_fe_log_dir }}
+internal_log_dir = {{ starrocks_fe_log_dir }}
+big_query_log_dir = {{ starrocks_fe_log_dir }}
+profile_log_dir = {{ starrocks_fe_log_dir }}
+feature_log_dir = {{ starrocks_fe_log_dir }}
+{% if starrocks_priority_networks | default('') %}
+priority_networks = {{ starrocks_priority_networks }}
+{% endif %}

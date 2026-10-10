@@ -1,0 +1,6 @@
+apiVersion: v2
+name: starrocks-backfill
+description: Load HDFS Parquet files into StarRocks for a selected time window
+type: application
+version: 0.1.0
+appVersion: "0.0.1-SNAPSHOT"

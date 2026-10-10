@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "spark-cluster.resourceName" (dict "root" . "component" "master") }}
+  labels:
+    app: {{ include "spark-cluster.name" . }}
+    component: master
+
+spec:
+  selector:
+    app: {{ include "spark-cluster.name" . }}
+    component: master
+
+  ports:
+    - name: {{ include "spark-cluster.name" . }}
+      port: {{ .Values.master.port }}
+      targetPort: {{ .Values.master.port }}

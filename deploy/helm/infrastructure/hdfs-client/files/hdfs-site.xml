@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<!-- Example configuration: replace the nameservice and documentation addresses for your cluster. -->
+<configuration>
+  <property>
+    <name>dfs.nameservices</name>
+    <value>netflow</value>
+  </property>
+  <property>
+    <name>dfs.ha.namenodes.netflow</name>
+    <value>netflow-node1,netflow-node2,netflow-node3</value>
+  </property>
+  <property>
+    <name>dfs.namenode.rpc-address.netflow.netflow-node1</name>
+    <value>192.0.2.11:8020</value>
+  </property>
+  <property>
+    <name>dfs.namenode.rpc-address.netflow.netflow-node2</name>
+    <value>192.0.2.12:8020</value>
+  </property>
+  <property>
+    <name>dfs.namenode.rpc-address.netflow.netflow-node3</name>
+    <value>192.0.2.13:8020</value>
+  </property>
+  <property>
+    <name>dfs.client.failover.proxy.provider.netflow</name>
+    <value>org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider</value>
+  </property>
+  <property>
+    <name>dfs.replication</name>
+    <value>2</value>
+  </property>
+</configuration>

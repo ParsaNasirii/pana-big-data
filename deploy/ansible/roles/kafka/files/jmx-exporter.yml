@@ -1,0 +1,30 @@
+---
+lowercaseOutputName: true
+lowercaseOutputLabelNames: true
+whitelistObjectNames:
+  - "kafka.*:*"
+rules:
+  # Rates in Grafana are computed from cumulative counts, not JMX moving averages.
+  - pattern: 'kafka.server<type=BrokerTopicMetrics, name=(MessagesIn|BytesIn|BytesOut)PerSec, topic=(.+)><>Count'
+    name: kafka_server_brokertopicmetrics_$1_total
+    type: COUNTER
+    labels:
+      topic: "$2"
+  - pattern: 'kafka.server<type=BrokerTopicMetrics, name=(MessagesIn|BytesIn|BytesOut)PerSec><>Count'
+    name: kafka_server_brokertopicmetrics_$1_total
+    type: COUNTER
+  # Preserve topic/partition labels used by the dashboard and replication alert.
+  - pattern: 'kafka.(log|cluster)<type=(Log|Partition), name=(Size|UnderReplicated), topic=(.+), partition=(.+)><>Value'
+    name: kafka_$1_$2_$3
+    type: GAUGE
+    labels:
+      topic: "$4"
+      partition: "$5"
+  - pattern: 'kafka.controller<type=KafkaController, name=(.+)><>Value'
+    name: kafka_controller_kafkacontroller_$1
+    type: GAUGE
+  - pattern: 'kafka.server<type=ReplicaManager, name=(.+)><>Value'
+    name: kafka_server_replicamanager_$1
+    type: GAUGE
+  # Include other Kafka/KRaft metrics using the exporter's default naming.
+  - pattern: '.*'

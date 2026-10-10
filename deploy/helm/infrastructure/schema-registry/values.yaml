@@ -1,0 +1,33 @@
+replicaCount: 1
+image: {repository: confluentinc/cp-schema-registry, tag: "8.0.2", pullPolicy: IfNotPresent}
+containerPort: 8081
+terminationGracePeriodSeconds: 30
+config:
+  SCHEMA_REGISTRY_HEAP_OPTS: "-Xms256m -Xmx256m"
+  SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: "PLAINTEXT://192.0.2.11:9092,PLAINTEXT://192.0.2.12:9092,PLAINTEXT://192.0.2.13:9092,PLAINTEXT://192.0.2.14:9092"
+  SCHEMA_REGISTRY_KAFKASTORE_TOPIC: "_schemas_netflow"
+  SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR: "3"
+  SCHEMA_REGISTRY_LISTENERS: "http://0.0.0.0:8081"
+  SCHEMA_REGISTRY_SCHEMA_COMPATIBILITY_LEVEL: "BACKWARD"
+  SCHEMA_REGISTRY_SCHEMA_REGISTRY_GROUP_ID: "schema-registry-netflow"
+service: {type: LoadBalancer, port: 8081}
+probes:
+  startup:
+    path: /subjects
+    timeoutSeconds: 3
+    failureThreshold: 30
+    periodSeconds: 5
+  readiness:
+    path: /subjects
+    timeoutSeconds: 3
+    failureThreshold: 6
+    periodSeconds: 10
+  liveness:
+    tcpSocket:
+      port: http
+    timeoutSeconds: 3
+    failureThreshold: 6
+    periodSeconds: 20
+resources:
+  requests: {cpu: 200m, memory: 256Mi}
+  limits: {cpu: 500m, memory: 512Mi}

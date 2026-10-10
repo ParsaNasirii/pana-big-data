@@ -1,0 +1,21 @@
+{{- if .Values.history.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "spark-cluster.resourceName" (dict "root" . "component" "history-ui") }}
+  labels:
+    app: {{ include "spark-cluster.name" . }}
+    component: history-ui
+spec:
+  type: {{ .Values.history.uiService.type }}
+  {{- if .Values.history.uiService.loadBalancerIP }}
+  loadBalancerIP: {{ .Values.history.uiService.loadBalancerIP }}
+  {{- end }}
+  selector:
+    app: {{ include "spark-cluster.name" . }}
+    component: history
+  ports:
+    - name: http
+      port: {{ .Values.history.uiService.port }}
+      targetPort: webui
+{{- end }}

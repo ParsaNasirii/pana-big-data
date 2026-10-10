@@ -1,0 +1,57 @@
+prometheus:
+  image:
+    repository: prom/prometheus
+    tag: v3.5.0
+    pullPolicy: IfNotPresent
+
+  service:
+    type: LoadBalancer
+    port: 9090
+
+  retention: 30d
+  storage:
+    storageClass: ""
+    size: 10Gi
+
+pushgateway:
+  image:
+    repository: prom/pushgateway
+    tag: v1.11.3
+    pullPolicy: IfNotPresent
+
+  storage:
+    storageClass: ""
+    size: 1Gi
+
+grafana:
+  image:
+    repository: grafana/grafana
+    tag: 13.2.0
+    pullPolicy: IfNotPresent
+
+  service:
+    type: LoadBalancer
+    port: 3000
+
+  # Secret keys: admin-user, admin-password, STARROCKS_USERNAME,
+  # STARROCKS_PASSWORD, POSTGRES_USERNAME, POSTGRES_PASSWORD.
+  existingSecret: ""
+
+  datasources:
+    starrocks:
+      host: "192.0.2.11:9030"
+      database: panabigdata
+    postgres:
+      host: "postgres:5432"
+      database: netflow_cube_db
+      sslmode: require
+
+  storage:
+    storageClass: ""
+    size: 1Gi
+
+nodeExporter:
+  image:
+    repository: prom/node-exporter
+    tag: v1.12.1
+    pullPolicy: IfNotPresent

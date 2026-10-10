@@ -1,0 +1,309 @@
+groups:
+  - name: infrastructure
+    rules:
+      - alert: PrometheusTargetDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Prometheus target is down"
+          description: "{{ $labels.job }} / {{ $labels.instance }} has been down for more than 2 minutes."
+
+      - alert: HostHighCPUUsage
+        expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 90
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+
+      - alert: HostHighDiskSpaceUsageWarning
+        expr: |
+          (
+            100 *
+            (
+              1 -
+              node_filesystem_avail_bytes{
+                mountpoint=~"/|/mnt/disk1",
+                fstype!~"tmpfs|overlay|squashfs"
+              }
+              /
+              node_filesystem_size_bytes{
+                mountpoint=~"/|/mnt/disk1",
+                fstype!~"tmpfs|overlay|squashfs"
+              }
+            )
+          ) > 75
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High disk usage on {{ $labels.instance }}"
+          description: >
+            Filesystem {{ $labels.mountpoint }} is
+            {{ printf "%.1f" $value }}% full.
+
+      - alert: HostHighDiskSpaceUsageCritical
+        expr: |
+          (
+            100 *
+            (
+              1 -
+              node_filesystem_avail_bytes{
+                mountpoint=~"/|/mnt/disk1",
+                fstype!~"tmpfs|overlay|squashfs"
+              }
+              /
+              node_filesystem_size_bytes{
+                mountpoint=~"/|/mnt/disk1",
+                fstype!~"tmpfs|overlay|squashfs"
+              }
+            )
+          ) > 85
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical disk usage on {{ $labels.instance }}"
+          description: >
+            Filesystem {{ $labels.mountpoint }} is
+            {{ printf "%.1f" $value }}% full.
+
+      - alert: HostLowFreeDiskSpaceCritical
+        expr: |
+          node_filesystem_avail_bytes{
+            mountpoint=~"/|/mnt/disk1",
+            fstype!~"tmpfs|overlay|squashfs"
+          } < 5 * 1024^3
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Very low absolute disk space on {{ $labels.instance }}"
+          description: >
+            Filesystem {{ $labels.mountpoint }} has less than 5 GiB free.
+
+      - alert: HostHighInodeUsageWarning
+        expr: |
+          (
+            100 *
+            (
+              1 -
+              node_filesystem_files_free{
+                mountpoint=~"/|/mnt/disk1",
+                fstype!~"tmpfs|overlay|squashfs"
+              }
+              /
+              node_filesystem_files{
+                mountpoint=~"/|/mnt/disk1",
+                fstype!~"tmpfs|overlay|squashfs"
+              }
+            )
+          ) > 80
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High inode usage on {{ $labels.instance }}"
+          description: >
+            Filesystem {{ $labels.mountpoint }} is using
+            {{ printf "%.1f" $value }}% of its inodes.
+
+      - alert: HostHighInodeUsageCritical
+        expr: |
+          (
+            100 *
+            (
+              1 -
+              node_filesystem_files_free{
+                mountpoint=~"/|/mnt/disk1",
+                fstype!~"tmpfs|overlay|squashfs"
+              }
+              /
+              node_filesystem_files{
+                mountpoint=~"/|/mnt/disk1",
+                fstype!~"tmpfs|overlay|squashfs"
+              }
+            )
+          ) > 90
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical inode usage on {{ $labels.instance }}"
+          description: >
+            Filesystem {{ $labels.mountpoint }} is using
+            {{ printf "%.1f" $value }}% of its inodes.
+
+  - name: kafka
+    rules:
+      - alert: KafkaUnderReplicatedPartitions
+        expr: sum(max by(topic, partition) (kafka_cluster_partition_underreplicated)) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kafka has under-replicated partitions"
+
+      - alert: KafkaActiveControllerCount
+        expr: sum(kafka_controller_kafkacontroller_activecontrollercount{job="kafka-broker-jmx"}) != 1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kafka must have exactly one active controller"
+
+  - name: hdfs
+    rules:
+      - alert: HdfsTargetDown
+        expr: up{job=~"hdfs-namenode|hdfs-datanode"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "HDFS daemon metrics endpoint is unavailable"
+
+  - name: starrocks
+    rules:
+      - alert: StarRocksNodeDown
+        expr: up{job=~"starrocks-fe|starrocks-be"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "StarRocks node metrics endpoint is unavailable"
+
+  - name: applications
+    rules:
+      - alert: KafkaConsumerHighInvalidRecordRatio
+        expr: |
+          (
+            sum by(namespace, app, component) (
+              rate(kafka_records_invalid_total{job="app-metrics"}[10m])
+            )
+            /
+            clamp_min(
+              sum by(namespace, app, component) (
+                rate(kafka_records_valid_total{job="app-metrics"}[10m])
+              )
+              +
+              sum by(namespace, app, component) (
+                rate(kafka_records_invalid_total{job="app-metrics"}[10m])
+              ),
+              1e-9
+            )
+          ) > 0.05
+          and on(namespace, app, component)
+          (
+            sum by(namespace, app, component) (
+              rate(kafka_records_valid_total{job="app-metrics"}[10m])
+            )
+            +
+            sum by(namespace, app, component) (
+              rate(kafka_records_invalid_total{job="app-metrics"}[10m])
+            )
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kafka consumer has a high invalid-record ratio"
+          description: >
+            {{ $labels.namespace }}/{{ $labels.app }} ({{ $labels.component }})
+            has rejected more than 5% of records for 10 minutes.
+
+      - alert: ParquetWriterErrors
+        expr: |
+          sum by(namespace, app) (
+            increase(parquet_writer_rotations_total{
+              job="app-metrics", outcome="failed"
+            }[15m])
+          )
+          + on(namespace, app)
+          sum by(namespace, app) (
+            increase(parquet_writer_io_errors_total{job="app-metrics"}[15m])
+          ) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Parquet writer is reporting write errors"
+          description: >
+            {{ $labels.namespace }}/{{ $labels.app }} reported a failed rotation
+            or filesystem I/O error in the last 15 minutes.
+
+      - alert: ParquetWriterStalledWithBufferedRecords
+        expr: |
+          sum by(namespace, app, instance) (
+            parquet_writer_buffered_records{job="app-metrics"}
+          ) > 0
+          and on(namespace, app, instance)
+          sum by(namespace, app, instance) (
+            increase(parquet_writer_records_finalized_total{job="app-metrics"}[90m])
+          ) == 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Parquet writer is not finalizing buffered records"
+          description: >
+            {{ $labels.namespace }}/{{ $labels.app }} has buffered records but
+            has not finalized any for at least 90 minutes.
+
+      - alert: CubeMakerRunOverdue
+        expr: |
+          time()
+          - max by(job) (
+              cube_maker_last_completion_timestamp_seconds{job="cube-maker"}
+            ) > 7200
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Cube maker has not completed recently"
+          description: "The cube-maker job has not completed for more than 2 hours."
+
+      - alert: CubeMakerRunFailed
+        expr: |
+          sum by(job) (
+            increase(cube_maker_run_duration_seconds_count{
+              job="cube-maker", outcome="failed"
+            }[2h])
+          ) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Cube maker run failed"
+          description: "The cube-maker job reported a failed run in the last 2 hours."
+
+      - alert: StarRocksWriterLoadFailed
+        expr: |
+          sum by(namespace, app) (
+            increase(starrocks_writer_loads_total{
+              job="app-metrics", outcome="failed"
+            }[10m])
+          ) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "StarRocks writer stopped on a terminal load failure"
+          description: >
+            {{ $labels.namespace }}/{{ $labels.app }} reported a non-retryable
+            Stream Load failure in the last 10 minutes.
+
+      - alert: StarRocksWriterLoadStuck
+        expr: |
+          sum by(namespace, app, instance) (
+            starrocks_writer_pending_rows{job="app-metrics"}
+          ) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "StarRocks writer has a batch stuck in retry"
+          description: >
+            {{ $labels.namespace }}/{{ $labels.app }} has retained pending rows
+            for more than 5 minutes.

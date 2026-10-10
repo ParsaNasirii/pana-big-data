@@ -1,0 +1,15 @@
+
+be_port = {{ starrocks_be_port }}
+http_port = {{ starrocks_be_http_port }}
+heartbeat_service_port = {{ starrocks_be_heartbeat_port }}
+brpc_port = {{ starrocks_be_brpc_port }}
+starlet_port = {{ starrocks_be_starlet_port }}
+
+storage_root_path = {{ starrocks_be_storage_root }}
+mem_limit = {{ starrocks_be_mem_limit }}
+datacache_mem_size = {{ starrocks_be_datacache_mem_size }}
+enable_datacache_mem_auto_adjust = {{ starrocks_be_enable_datacache_mem_auto_adjust | lower }}
+LOG_DIR = {{ starrocks_be_log_dir }}
+{% if starrocks_priority_networks | default('') %}
+priority_networks = {{ starrocks_priority_networks }}
+{% endif %}

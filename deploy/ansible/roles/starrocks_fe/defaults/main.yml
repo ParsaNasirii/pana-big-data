@@ -1,0 +1,16 @@
+---
+starrocks_fe_home: "{{ starrocks_install_base }}/fe"
+starrocks_fe_meta_dir: "{{ starrocks_fe_home }}/meta"
+starrocks_fe_log_dir: "{{ starrocks_fe_home }}/log"
+starrocks_fe_heap_size: "4g"
+
+starrocks_fe_http_port: 8030
+starrocks_fe_edit_log_port: 9010
+starrocks_fe_rpc_port: 9020
+
+starrocks_fe_leader: "{{ groups['starrocks_leader'][0] }}"
+starrocks_fe_leader_ip: "{{ hostvars[starrocks_fe_leader]['ansible_host'] }}"
+
+starrocks_fe_helper: >-
+  {{ '' if inventory_hostname == starrocks_fe_leader
+     else starrocks_fe_leader_ip ~ ':' ~ starrocks_fe_edit_log_port }}

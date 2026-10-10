@@ -1,0 +1,41 @@
+---
+- name: Wait for leader FE query port {{ starrocks_fe_query_port }}
+  ansible.builtin.wait_for:
+    host: "{{ starrocks_fe_leader_ip }}"
+    port: "{{ starrocks_fe_query_port }}"
+    timeout: "{{ starrocks_fe_http_wait_timeout }}"
+  when: not ansible_check_mode
+
+- name: Probe whether root still has no password
+  community.mysql.mysql_query:
+    login_user: root
+    login_host: "{{ starrocks_fe_leader_ip }}"
+    login_port: "{{ starrocks_fe_query_port }}"
+    query: "SELECT 1"
+  delegate_to: localhost
+  register: starrocks_root_no_password
+  failed_when: false
+  changed_when: false
+
+- name: Query FEs already registered on the leader
+  community.mysql.mysql_query:
+    login_user: root
+    login_password: "{{ starrocks_root_password if starrocks_root_no_password.query_result is not defined else omit }}"
+    login_host: "{{ starrocks_fe_leader_ip }}"
+    login_port: "{{ starrocks_fe_query_port }}"
+    query: "SHOW FRONTENDS"
+  delegate_to: localhost
+  register: starrocks_fe_frontends
+  changed_when: false
+
+- name: Add this follower FE if it is not registered yet
+  community.mysql.mysql_query:
+    login_user: root
+    login_password: "{{ starrocks_root_password if starrocks_root_no_password.query_result is not defined else omit }}"
+    login_host: "{{ starrocks_fe_leader_ip }}"
+    login_port: "{{ starrocks_fe_query_port }}"
+    query: "ALTER SYSTEM ADD FOLLOWER '{{ hostvars[inventory_hostname]['ansible_host'] }}:{{ starrocks_fe_edit_log_port }}'"
+  delegate_to: localhost
+  when:
+    - not ansible_check_mode
+    - hostvars[inventory_hostname]['ansible_host'] not in (starrocks_fe_frontends.query_result[0] | map(attribute='IP') | list)

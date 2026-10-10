@@ -1,0 +1,15 @@
+{{- if .Values.history.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "spark-cluster.resourceName" (dict "root" . "component" "history-config") }}
+  labels:
+    app: {{ include "spark-cluster.name" . }}
+    component: history
+data:
+  spark-defaults.conf: |
+    spark.history.fs.logDirectory {{ .Values.history.eventLogs.directory }}
+    spark.history.ui.port {{ .Values.history.webuiPort }}
+    spark.history.fs.cleaner.enabled {{ .Values.history.cleaner.enabled }}
+    spark.history.fs.cleaner.maxAge {{ .Values.history.cleaner.maxAge }}
+{{- end }}

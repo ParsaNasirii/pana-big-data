@@ -1,0 +1,38 @@
+image:
+  repository: ghcr.io/your-github-user/pana-big-data/starrocks-backfill
+  tag: ""
+  pullPolicy: Always
+
+credentials:
+  # Secret keys: STARROCKS_USERNAME and STARROCKS_PASSWORD.
+  existingSecret: ""
+hdfsConfigMap: hdfs-client-config
+starrocks:
+  jdbcUrl: jdbc:mysql://192.0.2.14:9030/panabigdata
+
+# Restore into netflow_raw with starrocks-writer stopped until the Job finishes.
+# Automatic retention is disabled so restored archives remain available for queries.
+backfill:
+  start: ""
+  end: ""
+  path: "/netflow"
+
+jdbc:
+  connectTimeout: "10000"
+  socketTimeout: "1260000"
+  sslMode: DISABLED
+
+session:
+  time_zone: Asia/Tehran
+  query_timeout: "1200"
+  insert_timeout: "1200"
+  query_mem_limit: "536870912"
+  load_mem_limit: "536870912"
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 1Gi
+  limits:
+    cpu: "1"
+    memory: 1536Mi

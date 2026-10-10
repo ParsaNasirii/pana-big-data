@@ -1,0 +1,12 @@
+---
+# Copy to inventory/group_vars/all/vault.yml, replace the value, then encrypt it:
+# ansible-vault encrypt inventory/group_vars/all/vault.yml
+# This example is outside group_vars so Ansible never loads placeholders by default.
+starrocks_root_password: "CHANGE_ME_STARROCKS_PASSWORD"
+
+# Optional: uncomment if your sudo account requires a password.
+# ansible_become_password: "CHANGE_ME_SUDO_PASSWORD"
+
+# SSH keys are supported. For password authentication, set SSH_PASS in your shell
+# or uncomment this variable in the encrypted copy.
+# ansible_password: "CHANGE_ME_SSH_PASSWORD"
